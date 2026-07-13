@@ -1,0 +1,41 @@
+{
+  "name": "gr8booksneo-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Central QA automation toolkit for Gr8Books Neo.",
+  "scripts": {
+    "architecture": "depcruise --config .dependency-cruiser.cjs ../gr8bookslite-backend/src",
+    "circular": "madge ../gr8bookslite-backend/src ../gr8bookslite-frontend --circular",
+    "deadcode": "ts-prune -p ../gr8bookslite-backend/tsconfig.json",
+    "security": "semgrep scan --config auto ../gr8bookslite-backend/src --text",
+    "smoke": "playwright test",
+
+    "report:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force reports | Out-Null\"",
+    "report:architecture": "npm run report:prepare && npm run architecture > reports/architecture.txt",
+    "report:circular": "npm run report:prepare && npm run circular > reports/circular.txt",
+    "report:deadcode": "npm run report:prepare && npm run deadcode > reports/deadcode.txt",
+    "report:security": "npm run report:prepare && npm run security > reports/security.txt",
+
+    "summary": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-summary.ps1",
+    "qa": "npm run report:architecture && npm run report:circular && npm run report:deadcode && npm run report:security && npm run summary"
+  },
+  "keywords": [
+    "qa",
+    "automation",
+    "playwright",
+    "semgrep",
+    "architecture"
+  ],
+  "author": "Integr8 Software",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "devDependencies": {
+    "@faker-js/faker": "^10.5.0",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1",
+    "dependency-cruiser": "^18.0.0",
+    "madge": "^8.0.0",
+    "ts-prune": "^0.10.3",
+    "typescript": "^6.0.3"
+  }
+}
