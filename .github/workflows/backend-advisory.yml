@@ -1,0 +1,35 @@
+name: Backend Advisory Analysis
+
+on:
+  workflow_dispatch:
+
+  workflow_call:
+
+  pull_request:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  verify-workflow:
+    name: Verify Automation Workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Confirm Workflow Execution
+        run: |
+          echo "Gr8Books Neo backend advisory workflow is working."
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Event: $GITHUB_EVENT_NAME"
+          echo "Commit: $GITHUB_SHA"
+
+      - name: Add Test Summary
+        run: |
+          echo "## Gr8Books Neo Automation" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ Backend advisory workflow was detected and executed successfully." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This is the initial connectivity test. Architecture and code-analysis tools will be added next." >> "$GITHUB_STEP_SUMMARY"
