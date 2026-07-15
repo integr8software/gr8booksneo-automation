@@ -2,19 +2,8 @@ name: Backend Advisory Analysis
 
 on:
   workflow_call:
-    inputs:
-      toolkit-ref:
-        description: Automation toolkit branch
-        required: false
-        type: string
-        default: develop
 
   workflow_dispatch:
-    inputs:
-      toolkit-ref:
-        description: Automation toolkit branch
-        required: false
-        default: develop
 
 permissions:
   contents: read
@@ -23,32 +12,20 @@ jobs:
   backend-advisory:
     name: Backend Advisory Checks
     runs-on: [self-hosted, Windows, X64]
-
     timeout-minutes: 30
-
     continue-on-error: true
 
     steps:
-
       - name: Checkout Target Repository
         uses: actions/checkout@v4
 
-      - name: Checkout QA Toolkit
-        uses: actions/checkout@v4
-        with:
-          repository: integr8software/gr8booksneo-automation
-          ref: ${{ inputs.toolkit-ref }}
-          path: qa-toolkit
-
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: qa-toolkit/package-lock.json
 
-      - name: Run Backend Analysis
-        uses: ./qa-toolkit/.github/actions/backend-analysis
+      - name: Run Gr8Books Neo Backend Analysis
+        uses: integr8software/gr8booksneo-automation/.github/actions/backend-analysis@develop
         with:
           source-path: src
           tsconfig-path: tsconfig.json
@@ -57,28 +34,28 @@ jobs:
         if: always()
         shell: powershell
         run: |
-
           $report = Join-Path $env:GITHUB_WORKSPACE "reports\QA-Report.md"
 
-          if (Test-Path $report)
-          {
-              Get-Content $report -Raw |
-                  Add-Content $env:GITHUB_STEP_SUMMARY
+          if (Test-Path $report) {
+              Get-Content -Path $report -Raw |
+                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           }
-          else
-          {
-              "## QA Report" |
-                  Add-Content $env:GITHUB_STEP_SUMMARY
+          else {
+              "## Backend Advisory Analysis" |
+                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
 
-              "No report generated." |
-                  Add-Content $env:GITHUB_STEP_SUMMARY
+              "" |
+                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+
+              "No combined QA report was generated." |
+                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
           }
 
       - name: Upload Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-advisory-${{ github.run_number }}
+          name: backend-advisory-reports-${{ github.run_number }}
           path: reports/
           if-no-files-found: warn
           retention-days: 14
