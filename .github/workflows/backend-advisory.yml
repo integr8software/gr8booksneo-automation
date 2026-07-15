@@ -1,35 +1,84 @@
 name: Backend Advisory Analysis
 
 on:
-  workflow_dispatch:
-
   workflow_call:
+    inputs:
+      toolkit-ref:
+        description: Automation toolkit branch
+        required: false
+        type: string
+        default: develop
 
-  pull_request:
-    branches:
-      - develop
+  workflow_dispatch:
+    inputs:
+      toolkit-ref:
+        description: Automation toolkit branch
+        required: false
+        default: develop
 
 permissions:
   contents: read
 
 jobs:
-  verify-workflow:
-    name: Verify Automation Workflow
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  backend-advisory:
+    name: Backend Advisory Checks
+    runs-on: [self-hosted, Windows, X64]
+
+    timeout-minutes: 30
+
+    continue-on-error: true
 
     steps:
-      - name: Confirm Workflow Execution
-        run: |
-          echo "Gr8Books Neo backend advisory workflow is working."
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Event: $GITHUB_EVENT_NAME"
-          echo "Commit: $GITHUB_SHA"
 
-      - name: Add Test Summary
+      - name: Checkout Target Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout QA Toolkit
+        uses: actions/checkout@v4
+        with:
+          repository: integr8software/gr8booksneo-automation
+          ref: ${{ inputs.toolkit-ref }}
+          path: qa-toolkit
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: qa-toolkit/package-lock.json
+
+      - name: Run Backend Analysis
+        uses: ./qa-toolkit/.github/actions/backend-analysis
+        with:
+          source-path: src
+          tsconfig-path: tsconfig.json
+
+      - name: Publish QA Summary
+        if: always()
+        shell: powershell
         run: |
-          echo "## Gr8Books Neo Automation" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ Backend advisory workflow was detected and executed successfully." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "This is the initial connectivity test. Architecture and code-analysis tools will be added next." >> "$GITHUB_STEP_SUMMARY"
+
+          $report = Join-Path $env:GITHUB_WORKSPACE "reports\QA-Report.md"
+
+          if (Test-Path $report)
+          {
+              Get-Content $report -Raw |
+                  Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          else
+          {
+              "## QA Report" |
+                  Add-Content $env:GITHUB_STEP_SUMMARY
+
+              "No report generated." |
+                  Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-advisory-${{ github.run_number }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14

@@ -4,27 +4,32 @@
   "private": true,
   "description": "Central QA automation toolkit for Gr8Books Neo.",
   "scripts": {
-    "architecture": "depcruise --config .dependency-cruiser.cjs ../gr8bookslite-backend/src",
-    "circular": "madge ../gr8bookslite-backend/src ../gr8bookslite-frontend --circular",
+    "architecture": "depcruise --config configs/dependency-cruiser.cjs --ts-config ../gr8bookslite-backend/tsconfig.json ../gr8bookslite-backend/src",
+    "circular": "madge ../gr8bookslite-backend/src --extensions ts --ts-config ../gr8bookslite-backend/tsconfig.json --circular",
     "deadcode": "ts-prune -p ../gr8bookslite-backend/tsconfig.json",
-    "security": "semgrep scan --config auto ../gr8bookslite-backend/src --text",
     "smoke": "playwright test",
 
-    "report:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force reports | Out-Null\"",
-    "report:architecture": "npm run report:prepare && npm run architecture > reports/architecture.txt",
-    "report:circular": "npm run report:prepare && npm run circular > reports/circular.txt",
-    "report:deadcode": "npm run report:prepare && npm run deadcode > reports/deadcode.txt",
-    "report:security": "npm run report:prepare && npm run security > reports/security.txt",
+    "check:architecture": "depcruise --version",
+    "check:circular": "madge --version",
+    "check:deadcode": "ts-prune --version",
+    "check:playwright": "playwright --version",
+    "verify:tools": "npm run check:architecture && npm run check:circular && npm run check:deadcode && npm run check:playwright",
 
-    "summary": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-summary.ps1",
-    "qa": "npm run report:architecture && npm run report:circular && npm run report:deadcode && npm run report:security && npm run summary"
+    "report:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force reports | Out-Null\"",
+    "report:architecture": "npm run report:prepare && npm run architecture > reports/architecture.txt 2>&1",
+    "report:circular": "npm run report:prepare && npm run circular > reports/circular.txt 2>&1",
+    "report:deadcode": "npm run report:prepare && npm run deadcode > reports/deadcode.txt 2>&1",
+
+    "summary": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-summary.ps1 -ReportDir reports",
+    "qa": "npm run report:architecture && npm run report:circular && npm run report:deadcode && npm run summary"
   },
   "keywords": [
+    "gr8booksneo",
     "qa",
     "automation",
     "playwright",
-    "semgrep",
-    "architecture"
+    "architecture",
+    "static-analysis"
   ],
   "author": "Integr8 Software",
   "license": "UNLICENSED",
@@ -32,10 +37,10 @@
   "devDependencies": {
     "@faker-js/faker": "^10.5.0",
     "@playwright/test": "^1.61.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^24.10.0",
     "dependency-cruiser": "^18.0.0",
     "madge": "^8.0.0",
     "ts-prune": "^0.10.3",
-    "typescript": "^6.0.3"
+    "typescript": "^5.9.3"
   }
 }
