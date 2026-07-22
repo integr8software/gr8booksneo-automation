@@ -146,7 +146,7 @@ runs:
 
         semgrep --version
 
-    - name: Verify QA tools
+        - name: Verify QA tools
       shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
@@ -160,6 +160,7 @@ runs:
         }
         finally {
           Pop-Location
+        }
 
     - name: Determine PR changed files
       id: changed-files
