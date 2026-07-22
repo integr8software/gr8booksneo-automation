@@ -131,6 +131,21 @@ runs:
           Pop-Location
         }
 
+    - name: Setup Python for Semgrep
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Semgrep
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        python -m pip install --upgrade pip
+        python -m pip install semgrep
+
+        semgrep --version
+
     - name: Verify QA tools
       shell: powershell
       env:
@@ -145,7 +160,6 @@ runs:
         }
         finally {
           Pop-Location
-        }
 
     - name: Determine PR changed files
       id: changed-files
@@ -459,5 +473,3 @@ runs:
             exit 1
           }
         }
-
-
