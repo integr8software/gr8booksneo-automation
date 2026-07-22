@@ -1,46 +1,44 @@
 {
   "name": "gr8booksneo-automation",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Central QA automation toolkit for Gr8Books Neo.",
+  "description": "Centralized PR-focused QA automation toolkit for Gr8Books Neo.",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "architecture": "depcruise --config configs/dependency-cruiser.cjs --ts-config ../gr8bookslite-backend/tsconfig.json ../gr8bookslite-backend/src",
-    "circular": "madge ../gr8bookslite-backend/src --extensions ts --ts-config ../gr8bookslite-backend/tsconfig.json --circular",
-    "deadcode": "ts-prune -p ../gr8bookslite-backend/tsconfig.json",
-    "smoke": "playwright test",
-
-    "check:architecture": "depcruise --version",
-    "check:circular": "madge --version",
-    "check:deadcode": "ts-prune --version",
+    "check:madge": "madge --version",
+    "check:knip": "knip --version",
     "check:playwright": "playwright --version",
-    "verify:tools": "npm run check:architecture && npm run check:circular && npm run check:deadcode && npm run check:playwright",
-
-    "report:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force reports | Out-Null\"",
-    "report:architecture": "npm run report:prepare && npm run architecture > reports/architecture.txt 2>&1",
-    "report:circular": "npm run report:prepare && npm run circular > reports/circular.txt 2>&1",
-    "report:deadcode": "npm run report:prepare && npm run deadcode > reports/deadcode.txt 2>&1",
-
-    "summary": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-summary.ps1 -ReportDir reports",
-    "qa": "npm run report:architecture && npm run report:circular && npm run report:deadcode && npm run summary"
+    "check:semgrep": "semgrep --version",
+    "verify:node-tools": "npm run check:madge && npm run check:knip && npm run check:playwright",
+    "verify:tools": "npm run verify:node-tools && npm run check:semgrep",
+    "knip": "knip --config configs/knip.json --reporter json --no-progress --no-config-hints",
+    "madge": "madge --circular --json --extensions ts,tsx",
+    "semgrep": "semgrep scan --config configs/semgrep.yml --json --quiet --metrics off",
+    "smoke": "playwright test"
   },
   "keywords": [
     "gr8booksneo",
     "qa",
     "automation",
+    "github-actions",
+    "pull-request",
+    "semgrep",
+    "madge",
+    "knip",
     "playwright",
-    "architecture",
     "static-analysis"
   ],
   "author": "Integr8 Software",
   "license": "UNLICENSED",
-  "type": "commonjs",
   "devDependencies": {
     "@faker-js/faker": "^10.5.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^24.10.0",
-    "dependency-cruiser": "^18.0.0",
+    "knip": "^6.27.0",
     "madge": "^8.0.0",
-    "ts-prune": "^0.10.3",
     "typescript": "^5.9.3"
   }
 }

@@ -1,101 +1,461 @@
-name: Gr8Books Neo Backend Analysis
+name: Gr8Books Neo Backend PR Analysis
 
 description: >
-  Runs architecture, circular dependency,
-  dead-code analysis and generates a unified QA report.
+  Runs PR-focused Madge, Knip, and Semgrep analysis and generates
+  a developer-friendly quality summary.
 
 inputs:
-
-  source-path:
-    description: Backend source directory
+  repository-root:
+    description: Absolute path of the checked-out backend repository
     required: false
-    default: src
+    default: ""
 
   tsconfig-path:
-    description: TypeScript configuration
+    description: TypeScript configuration path relative to the backend repository
     required: false
-    default: tsconfig.json
+    default: "tsconfig.json"
+
+  base-reference:
+    description: Base commit SHA or Git reference used for PR comparison
+    required: true
+
+  head-reference:
+    description: Head commit SHA or Git reference used for PR comparison
+    required: true
+
+  maximum-findings-per-tool:
+    description: Maximum findings displayed for each analyzer
+    required: false
+    default: "10"
+
+outputs:
+  overall-status:
+    description: Overall QA status
+    value: ${{ steps.summary.outputs.overall_status }}
+
+  blocking-result-count:
+    description: Number of blocking analyzer results
+    value: ${{ steps.summary.outputs.blocking_result_count }}
+
+  blocking-finding-count:
+    description: Number of blocking findings
+    value: ${{ steps.summary.outputs.blocking_finding_count }}
+
+  advisory-finding-count:
+    description: Number of advisory findings
+    value: ${{ steps.summary.outputs.advisory_finding_count }}
+
+  summary-path:
+    description: Generated Markdown summary path
+    value: ${{ steps.summary.outputs.summary_path }}
 
 runs:
-
   using: composite
 
   steps:
-
-    - name: Resolve Paths
-      shell: powershell
+    - name: Resolve QA paths
+      id: paths
+      shell: pwsh
+      env:
+        INPUT_REPOSITORY_ROOT: ${{ inputs.repository-root }}
       run: |
+        $ErrorActionPreference = "Stop"
 
-        $toolkitRoot = Resolve-Path "$env:GITHUB_ACTION_PATH\..\..\.."
+        $toolkitRoot = [System.IO.Path]::GetFullPath(
+          (Join-Path $env:GITHUB_ACTION_PATH "..\..\..")
+        )
 
-        $sourcePath = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "${{ inputs.source-path }}"
+        if ([string]::IsNullOrWhiteSpace($env:INPUT_REPOSITORY_ROOT)) {
+          $repositoryRoot = [System.IO.Path]::GetFullPath(
+            $env:GITHUB_WORKSPACE
+          )
+        }
+        else {
+          $repositoryRoot = [System.IO.Path]::GetFullPath(
+            $env:INPUT_REPOSITORY_ROOT
+          )
+        }
 
-        $tsConfigPath = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "${{ inputs.tsconfig-path }}"
+        if (-not (Test-Path -LiteralPath $toolkitRoot -PathType Container)) {
+          throw "Toolkit root does not exist: $toolkitRoot"
+        }
 
-        $reportDir = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "reports"
+        if (-not (Test-Path -LiteralPath $repositoryRoot -PathType Container)) {
+          throw "Repository root does not exist: $repositoryRoot"
+        }
 
-        "QA_TOOLKIT_ROOT=$toolkitRoot" |
-            Out-File $env:GITHUB_ENV `
-            -Append
+        $reportsRoot = Join-Path $repositoryRoot "reports"
+        $rawDirectory = Join-Path $reportsRoot "raw"
+        $resultsDirectory = Join-Path $reportsRoot "results"
 
-        "QA_SOURCE_PATH=$sourcePath" |
-            Out-File $env:GITHUB_ENV `
-            -Append
+        New-Item `
+          -ItemType Directory `
+          -Path $rawDirectory `
+          -Force |
+          Out-Null
 
-        "QA_TSCONFIG_PATH=$tsConfigPath" |
-            Out-File $env:GITHUB_ENV `
-            -Append
+        New-Item `
+          -ItemType Directory `
+          -Path $resultsDirectory `
+          -Force |
+          Out-Null
 
-        "QA_REPORT_DIR=$reportDir" |
-            Out-File $env:GITHUB_ENV `
-            -Append
+        $changedFilesPath = Join-Path $rawDirectory "changed-files.json"
+        $summaryPath = Join-Path $reportsRoot "Backend-PR-Quality.md"
 
-    - name: Install QA Toolkit
-      shell: powershell
+        "toolkit_root=$toolkitRoot" >> $env:GITHUB_OUTPUT
+        "repository_root=$repositoryRoot" >> $env:GITHUB_OUTPUT
+        "reports_root=$reportsRoot" >> $env:GITHUB_OUTPUT
+        "raw_directory=$rawDirectory" >> $env:GITHUB_OUTPUT
+        "results_directory=$resultsDirectory" >> $env:GITHUB_OUTPUT
+        "changed_files_path=$changedFilesPath" >> $env:GITHUB_OUTPUT
+        "summary_path=$summaryPath" >> $env:GITHUB_OUTPUT
+
+        Write-Host "Toolkit root: $toolkitRoot"
+        Write-Host "Backend repository root: $repositoryRoot"
+        Write-Host "Reports root: $reportsRoot"
+
+    - name: Install QA toolkit dependencies
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
       run: |
+        $ErrorActionPreference = "Stop"
 
-        npm ci `
-            --prefix "$env:QA_TOOLKIT_ROOT"
+        Push-Location $env:TOOLKIT_ROOT
 
-    - name: Architecture Analysis
-      shell: powershell
+        try {
+          npm ci
+        }
+        finally {
+          Pop-Location
+        }
+
+    - name: Verify QA tools
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
       run: |
+        $ErrorActionPreference = "Stop"
 
-        & "$env:QA_TOOLKIT_ROOT\scripts\architecture.ps1" `
-            -ToolkitRoot "$env:QA_TOOLKIT_ROOT" `
-            -SourcePath "$env:QA_SOURCE_PATH" `
-            -TsConfigPath "$env:QA_TSCONFIG_PATH" `
-            -ReportDir "$env:QA_REPORT_DIR"
+        Push-Location $env:TOOLKIT_ROOT
 
-    - name: Circular Dependency Analysis
-      shell: powershell
+        try {
+          npm run verify:tools
+        }
+        finally {
+          Pop-Location
+        }
+
+    - name: Determine PR changed files
+      id: changed-files
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        BASE_REFERENCE: ${{ inputs.base-reference }}
+        HEAD_REFERENCE: ${{ inputs.head-reference }}
       run: |
+        $ErrorActionPreference = "Stop"
 
-        & "$env:QA_TOOLKIT_ROOT\scripts\circular.ps1" `
-            -ToolkitRoot "$env:QA_TOOLKIT_ROOT" `
-            -SourcePath "$env:QA_SOURCE_PATH" `
-            -TsConfigPath "$env:QA_TSCONFIG_PATH" `
-            -ReportDir "$env:QA_REPORT_DIR"
+        $commonScript = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\common.ps1"
 
-    - name: Dead Code Analysis
-      shell: powershell
+        if (-not (Test-Path -LiteralPath $commonScript -PathType Leaf)) {
+          throw "Required common script was not found: $commonScript"
+        }
+
+        . $commonScript
+
+        Write-QaLog `
+          -Level "INFO" `
+          -Message "Comparing $env:BASE_REFERENCE...$env:HEAD_REFERENCE"
+
+        $changedFiles = Get-QaChangedFiles `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -BaseReference $env:BASE_REFERENCE `
+          -HeadReference $env:HEAD_REFERENCE
+
+        $changedFilesDocument = [ordered]@{
+          baseReference = $env:BASE_REFERENCE
+          headReference = $env:HEAD_REFERENCE
+          count = $changedFiles.Count
+          files = @($changedFiles)
+        }
+
+        Write-QaJson `
+          -Value $changedFilesDocument `
+          -Path $env:CHANGED_FILES_PATH |
+          Out-Null
+
+        "count=$($changedFiles.Count)" >> $env:GITHUB_OUTPUT
+
+        Write-QaLog `
+          -Level "SUCCESS" `
+          -Message "$($changedFiles.Count) changed file(s) detected."
+
+        foreach ($file in $changedFiles) {
+          Write-Host " - $file"
+        }
+
+    - name: Run Madge circular dependency analysis
+      id: madge
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+        TSCONFIG_PATH: ${{ inputs.tsconfig-path }}
       run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-madge.ps1"
 
-        & "$env:QA_TOOLKIT_ROOT\scripts\deadcode.ps1" `
-            -ToolkitRoot "$env:QA_TOOLKIT_ROOT" `
-            -TsConfigPath "$env:QA_TSCONFIG_PATH" `
-            -ReportDir "$env:QA_REPORT_DIR"
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "madge-result.json"
 
-    - name: Generate QA Summary
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "madge-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -TsConfigPath $env:TSCONFIG_PATH `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
+    - name: Run Knip unused code analysis
+      id: knip
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-knip.ps1"
+
+        $configPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "configs\knip.json"
+
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "knip-result.json"
+
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "knip-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ConfigPath $configPath `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
+    - name: Run Semgrep security analysis
+      id: semgrep
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-semgrep.ps1"
+
+        $configPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "configs\semgrep.yml"
+
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "semgrep-result.json"
+
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "semgrep-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ConfigPath $configPath `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
+    - name: Generate developer-friendly summary
+      id: summary
       if: always()
-      shell: powershell
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        SUMMARY_PATH: ${{ steps.paths.outputs.summary_path }}
+        MAXIMUM_FINDINGS: ${{ inputs.maximum-findings-per-tool }}
       run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\generate-summary.ps1"
 
-        & "$env:QA_TOOLKIT_ROOT\scripts\generate-summary.ps1" `
-            -ReportDir "$env:QA_REPORT_DIR"
+        & $scriptPath `
+          -ResultsDirectory $env:RESULTS_DIRECTORY `
+          -SummaryPath $env:SUMMARY_PATH `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -MaximumDisplayedFindingsPerTool ([int]$env:MAXIMUM_FINDINGS)
+
+        exit $LASTEXITCODE
+
+            - name: Generate PR dashboard
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\generate-dashboard.ps1"
+
+        $templatePath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "templates\dashboard.html"
+
+        $outputPath = Join-Path `
+          $env:REPOSITORY_ROOT `
+          "reports\QA-Report.html"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ResultsDirectory $env:RESULTS_DIRECTORY `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -TemplatePath $templatePath `
+          -OutputPath $outputPath
+
+        exit $LASTEXITCODE
+
+    - name: Install Playwright Chromium
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+      run: |
+        Push-Location $env:TOOLKIT_ROOT
+
+        try {
+          npx playwright install chromium
+        }
+        finally {
+          Pop-Location
+        }
+
+    - name: Capture PR dashboard PNG
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+      run: |
+        $captureScript = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\capture-dashboard.mjs"
+
+        $htmlPath = Join-Path `
+          $env:REPOSITORY_ROOT `
+          "reports\QA-Report.html"
+
+        $pngPath = Join-Path `
+          $env:REPOSITORY_ROOT `
+          "reports\QA-Report.png"
+
+        Push-Location $env:TOOLKIT_ROOT
+
+        try {
+          node $captureScript $htmlPath $pngPath
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dashboard screenshot generation failed with exit code $LASTEXITCODE."
+          }
+        }
+        finally {
+          Pop-Location
+        }
+
+    - name: Enforce final QA result
+      if: always()
+      shell: pwsh
+      env:
+        OVERALL_STATUS: ${{ steps.summary.outputs.overall_status }}
+      run: |
+        $status = $env:OVERALL_STATUS
+
+        if ([string]::IsNullOrWhiteSpace($status)) {
+          Write-Error "The QA summary did not provide an overall status."
+          exit 1
+        }
+
+        Write-Host "Backend PR Quality status: $status"
+
+        switch ($status) {
+          "PASSED" {
+            Write-Host "No blocking advisory findings were detected."
+            exit 0
+          }
+
+          "WARNING" {
+            Write-Warning "The PR passed with advisory findings."
+            exit 0
+          }
+
+          "SKIPPED" {
+            Write-Host "No relevant files required advisory analysis."
+            exit 0
+          }
+
+          "FAILED" {
+            Write-Error "Blocking PR quality findings were detected."
+            exit 1
+          }
+
+          "ERROR" {
+            Write-Error "One or more QA analyzers failed to complete."
+            exit 1
+          }
+
+          default {
+            Write-Error "Unknown QA status: $status"
+            exit 1
+          }
+        }

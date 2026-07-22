@@ -1,4 +1,4 @@
-name: Backend Advisory Analysis
+name: Backend PR Quality
 
 on:
   workflow_call:
@@ -9,53 +9,40 @@ permissions:
   contents: read
 
 jobs:
-  backend-advisory:
-    name: Backend Advisory Checks
-    runs-on: [self-hosted, Windows, X64]
+  backend-pr-quality:
+    name: Backend PR Quality
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+
     timeout-minutes: 30
-    continue-on-error: true
 
     steps:
-      - name: Checkout Target Repository
+      - name: Checkout target repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24"
 
-      - name: Run Gr8Books Neo Backend Analysis
+      - name: Run backend PR quality analysis
         uses: integr8software/gr8booksneo-automation/.github/actions/backend-analysis@develop
         with:
-          source-path: src
+          repository-root: ${{ github.workspace }}
           tsconfig-path: tsconfig.json
+          base-reference: ${{ github.event.pull_request.base.sha }}
+          head-reference: ${{ github.event.pull_request.head.sha }}
+          maximum-findings-per-tool: "10"
 
-      - name: Publish QA Summary
-        if: always()
-        shell: powershell
-        run: |
-          $report = Join-Path $env:GITHUB_WORKSPACE "reports\QA-Report.md"
-
-          if (Test-Path $report) {
-              Get-Content -Path $report -Raw |
-                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-          }
-          else {
-              "## Backend Advisory Analysis" |
-                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-
-              "" |
-                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-
-              "No combined QA report was generated." |
-                  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding UTF8
-          }
-
-      - name: Upload Reports
+      - name: Upload backend PR quality reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-advisory-reports-${{ github.run_number }}
+          name: backend-pr-quality-${{ github.run_number }}
           path: reports/
           if-no-files-found: warn
           retention-days: 14
