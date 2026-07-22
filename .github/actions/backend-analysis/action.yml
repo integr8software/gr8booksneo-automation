@@ -55,7 +55,7 @@ runs:
   steps:
     - name: Resolve QA paths
       id: paths
-      shell: pwsh
+      shell: powershell
       env:
         INPUT_REPOSITORY_ROOT: ${{ inputs.repository-root }}
       run: |
@@ -116,7 +116,7 @@ runs:
         Write-Host "Reports root: $reportsRoot"
 
     - name: Install QA toolkit dependencies
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
       run: |
@@ -132,7 +132,7 @@ runs:
         }
 
     - name: Verify QA tools
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
       run: |
@@ -149,7 +149,7 @@ runs:
 
     - name: Determine PR changed files
       id: changed-files
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -203,7 +203,7 @@ runs:
     - name: Run Madge circular dependency analysis
       id: madge
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -237,7 +237,7 @@ runs:
     - name: Run Knip unused code analysis
       id: knip
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -274,7 +274,7 @@ runs:
     - name: Run Semgrep security analysis
       id: semgrep
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -312,7 +312,7 @@ runs:
       id: summary
       if: always()
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
@@ -335,7 +335,7 @@ runs:
     - name: Generate PR dashboard
       if: always()
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -367,7 +367,7 @@ runs:
     - name: Install Playwright Chromium
       if: always()
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
       run: |
@@ -383,7 +383,7 @@ runs:
     - name: Capture PR dashboard PNG
       if: always()
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -415,7 +415,7 @@ runs:
 
     - name: Enforce final QA result
       if: always()
-      shell: pwsh
+      shell: powershell
       env:
         OVERALL_STATUS: ${{ steps.summary.outputs.overall_status }}
       run: |
@@ -459,3 +459,5 @@ runs:
             exit 1
           }
         }
+
+
