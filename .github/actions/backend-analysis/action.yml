@@ -145,8 +145,7 @@ runs:
         python -m pip install semgrep
 
         semgrep --version
-
-        - name: Verify QA tools
+    - name: Verify QA tools
       shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
