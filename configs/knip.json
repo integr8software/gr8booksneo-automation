@@ -1,0 +1,45 @@
+{
+  "entry": [
+    "src/main.ts",
+    "prisma/seed.ts",
+    "prisma/seeds/**/*.ts",
+    "scripts/**/*.{js,cjs,mjs,ts}",
+    "*.config.{js,cjs,mjs,ts}"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "prisma/**/*.ts",
+    "scripts/**/*.{js,cjs,mjs,ts}",
+    "*.{js,cjs,mjs,ts}",
+    "!prisma.config.ts",
+    "!src/**/*.spec.ts",
+    "!src/**/*.test.ts",
+    "!src/**/__tests__/**",
+    "!src/**/fixtures/**",
+    "!src/**/mocks/**",
+    "!prisma/migrations/**",
+    "!dist/**",
+    "!build/**",
+    "!coverage/**",
+    "!reports/**",
+    "!node_modules/**"
+  ],
+  "ignore": [
+    "src/**/*.d.ts",
+    "src/generated/**",
+    "prisma/migrations/**",
+    "dist/**",
+    "build/**",
+    "coverage/**",
+    "reports/**",
+    "node_modules/**"
+  ],
+  "ignoreBinaries": [
+    "prisma",
+    "nest"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "includeEntryExports": false,
+  "treatConfigHintsAsErrors": false
+}

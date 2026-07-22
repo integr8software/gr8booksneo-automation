@@ -1,0 +1,281 @@
+rules:
+  # ==========================================================
+  # Dynamic code execution
+  # ==========================================================
+
+  - id: gr8booksneo.security.no-eval
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Avoid eval(). Executing dynamically constructed code can lead to
+      code-injection vulnerabilities.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-95
+      technology:
+        - nodejs
+    pattern: eval(...)
+
+  - id: gr8booksneo.security.no-function-constructor
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Avoid the Function constructor. It executes dynamically constructed
+      code and may allow code injection.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-95
+      technology:
+        - nodejs
+    pattern: new Function(...)
+
+  # ==========================================================
+  # Operating-system command execution
+  # ==========================================================
+
+  - id: gr8booksneo.security.dynamic-child-process-exec
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Review this child_process execution. Passing dynamic input to exec()
+      or execSync() may allow operating-system command injection.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-78
+      technology:
+        - nodejs
+    patterns:
+      - pattern-either:
+          - pattern: $PROCESS.exec($COMMAND, ...)
+          - pattern: $PROCESS.execSync($COMMAND, ...)
+      - metavariable-pattern:
+          metavariable: $COMMAND
+          patterns:
+            - pattern-not: '"..."'
+            - pattern-not: "'...'"
+
+  - id: gr8booksneo.security.spawn-with-shell-enabled
+    languages:
+      - javascript
+      - typescript
+    severity: WARNING
+    message: >
+      Review this process execution because shell mode is enabled.
+      Dynamic commands or arguments may allow command injection.
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+        - CWE-78
+      technology:
+        - nodejs
+    pattern-either:
+      - pattern: |
+          $PROCESS.spawn($COMMAND, $ARGS, {
+            ...,
+            shell: true,
+            ...
+          })
+      - pattern: |
+          $PROCESS.spawnSync($COMMAND, $ARGS, {
+            ...,
+            shell: true,
+            ...
+          })
+
+  # ==========================================================
+  # Prisma and SQL safety
+  # ==========================================================
+
+  - id: gr8booksneo.security.prisma-query-raw-unsafe
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Avoid Prisma unsafe raw-query methods. Use parameterized Prisma
+      queries or tagged-template raw queries instead.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-89
+      technology:
+        - prisma
+        - nodejs
+    pattern-either:
+      - pattern: $PRISMA.$queryRawUnsafe(...)
+      - pattern: $PRISMA.$executeRawUnsafe(...)
+
+  - id: gr8booksneo.security.dynamic-sql-query
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Avoid building SQL statements using concatenation or interpolation.
+      Use parameterized queries.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-89
+      technology:
+        - nodejs
+    pattern-either:
+      - pattern: |
+          $DATABASE.query("..." + $VALUE + "...", ...)
+      - pattern: |
+          $DATABASE.query(`...${$VALUE}...`, ...)
+      - pattern: |
+          $DATABASE.execute("..." + $VALUE + "...", ...)
+      - pattern: |
+          $DATABASE.execute(`...${$VALUE}...`, ...)
+
+  # ==========================================================
+  # Authentication and secrets
+  # ==========================================================
+
+  - id: gr8booksneo.security.hardcoded-jwt-secret
+    languages:
+      - typescript
+    severity: ERROR
+    message: >
+      Do not hardcode JWT secrets. Load the secret from an approved
+      environment variable or secret manager.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-798
+      technology:
+        - nestjs
+        - nodejs
+    pattern-either:
+      - pattern: |
+          JwtModule.register({
+            ...,
+            secret: "...",
+            ...
+          })
+      - pattern: |
+          JwtModule.registerAsync({
+            ...,
+            useFactory: (...) => ({
+              ...,
+              secret: "...",
+              ...
+            }),
+            ...
+          })
+
+  - id: gr8booksneo.security.jwt-ignore-expiration
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Do not disable JWT expiration verification.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-613
+      technology:
+        - nodejs
+    pattern: |
+      $JWT.verify($TOKEN, $SECRET, {
+        ...,
+        ignoreExpiration: true,
+        ...
+      })
+
+  - id: gr8booksneo.security.plaintext-password-comparison
+    languages:
+      - javascript
+      - typescript
+    severity: WARNING
+    message: >
+      Passwords should be verified using a password hashing function instead
+      of direct equality comparison.
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+        - CWE-256
+      technology:
+        - nodejs
+    pattern-either:
+      - pattern: $USER.password === $PASSWORD
+      - pattern: $USER.password == $PASSWORD
+      - pattern: $PASSWORD === $USER.password
+      - pattern: $PASSWORD == $USER.password
+
+  # ==========================================================
+  # Production configuration
+  # ==========================================================
+
+  - id: gr8booksneo.security.cors-wildcard-origin
+    languages:
+      - javascript
+      - typescript
+    severity: WARNING
+    message: >
+      Review wildcard CORS configuration.
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe:
+        - CWE-942
+      technology:
+        - nestjs
+        - nodejs
+    pattern-either:
+      - pattern: |
+          $APP.enableCors({
+            ...,
+            origin: "*",
+            ...
+          })
+      - pattern: |
+          $APP.enableCors({
+            ...,
+            origin: true,
+            ...
+          })
+
+  - id: gr8booksneo.security.reject-tls-disabled
+    languages:
+      - javascript
+      - typescript
+    severity: ERROR
+    message: >
+      Do not disable TLS certificate verification.
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe:
+        - CWE-295
+      technology:
+        - nodejs
+    pattern-either:
+      - pattern: |
+          {
+            ...,
+            rejectUnauthorized: false,
+            ...
+          }
+      - pattern: |
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
