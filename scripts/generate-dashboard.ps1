@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ToolkitRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$RepositoryRoot = "",
     [string]$ResultsDirectory = "",
