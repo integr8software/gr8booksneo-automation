@@ -1,4 +1,4 @@
-name: Gr8Books Neo Backend PR Analysis
+﻿name: Gr8Books Neo Backend PR Analysis
 
 description: >
   Runs PR-focused Madge, Knip, and Semgrep analysis and generates
