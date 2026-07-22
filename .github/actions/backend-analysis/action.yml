@@ -345,8 +345,7 @@ runs:
           -MaximumDisplayedFindingsPerTool ([int]$env:MAXIMUM_FINDINGS)
 
         exit $LASTEXITCODE
-
-            - name: Generate PR dashboard
+    - name: Generate PR dashboard
       if: always()
       continue-on-error: true
       shell: powershell
