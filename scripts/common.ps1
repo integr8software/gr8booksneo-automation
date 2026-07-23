@@ -200,9 +200,16 @@ function Invoke-QaProcess {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
 
-        foreach ($argument in $effectiveArguments) {
-            [void]$startInfo.ArgumentList.Add([string]$argument)
-        }
+        $escapedArguments = foreach ($argument in $effectiveArguments) {
+    if ($argument -match '[\s"]') {
+        '"' + ($argument -replace '"','\"') + '"'
+    }
+    else {
+        $argument
+    }
+}
+
+$startInfo.Arguments = ($escapedArguments -join ' ')
 
         foreach ($key in $Environment.Keys) {
             $startInfo.Environment[[string]$key] =

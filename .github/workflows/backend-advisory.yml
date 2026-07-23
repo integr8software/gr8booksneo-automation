@@ -6,7 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: read
 
 jobs:
   backend-pr-quality:
@@ -43,3 +46,152 @@ jobs:
           path: reports/
           if-no-files-found: warn
           retention-days: 14
+
+  publish-pr-preview:
+    name: Publish PR Dashboard Preview
+    needs: backend-pr-quality
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download backend PR quality reports
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-pr-quality-${{ github.run_number }}
+          path: ${{ runner.temp }}/backend-pr-quality
+
+      - name: Verify dashboard PNG
+        id: dashboard
+        shell: bash
+        run: |
+          image_path="${RUNNER_TEMP}/backend-pr-quality/QA-Report.png"
+
+          if [[ -f "$image_path" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Dashboard image found: $image_path"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Dashboard image was not generated."
+          fi
+
+      - name: Checkout report publishing branch
+        if: steps.dashboard.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Publish dashboard PNG
+        if: steps.dashboard.outputs.available == 'true'
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin qa-reports >/dev/null 2>&1; then
+            git fetch origin qa-reports
+            git switch --force-create qa-reports origin/qa-reports
+          else
+            git switch --orphan qa-reports
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          report_directory="pr-${PR_NUMBER}"
+          mkdir -p "$report_directory"
+
+          cp \
+            "${RUNNER_TEMP}/backend-pr-quality/QA-Report.png" \
+            "${report_directory}/QA-Report.png"
+
+          git add "${report_directory}/QA-Report.png"
+
+          if git diff --cached --quiet; then
+            echo "Dashboard image is already current."
+          else
+            git commit -m "QA: update dashboard for PR #${PR_NUMBER}"
+            git push origin qa-reports
+          fi
+
+      - name: Create or update PR dashboard comment
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          DASHBOARD_AVAILABLE: ${{ steps.dashboard.outputs.available }}
+          ANALYSIS_RESULT: ${{ needs.backend-pr-quality.result }}
+        with:
+          script: |
+            const marker = "<!-- gr8books-backend-pr-quality -->";
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.issue.number;
+            const runUrl =
+              `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const passed = process.env.ANALYSIS_RESULT === "success";
+            const statusIcon = passed ? "✅" : "❌";
+            const statusText = passed ? "PASSED" : "FAILED";
+
+            let dashboardSection = `
+            > The dashboard image was not generated. Open the workflow run for details.
+            `;
+
+            if (process.env.DASHBOARD_AVAILABLE === "true") {
+              const imageUrl =
+                `${context.serverUrl}/${owner}/${repo}/blob/qa-reports/` +
+                `pr-${issueNumber}/QA-Report.png?raw=1&run=${context.runId}`;
+
+              dashboardSection = `
+            <details open>
+            <summary><strong>📊 View QA Dashboard</strong></summary>
+
+            ![Backend PR Quality Dashboard](${imageUrl})
+
+            </details>
+              `;
+            }
+
+            const body = `${marker}
+            ## ${statusIcon} Backend PR Quality: ${statusText}
+
+            ${dashboardSection}
+
+            [Open the complete workflow run](${runUrl})
+
+            _This comment is automatically updated after every push to this PR._
+            `;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100
+              }
+            );
+
+            const existingComment = comments.find(
+              comment =>
+                comment.user?.type === "Bot" &&
+                comment.body?.includes(marker)
+            );
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existingComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                body
+              });
+            }
