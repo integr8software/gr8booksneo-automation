@@ -348,7 +348,7 @@ runs:
     - name: Generate PR dashboard
       if: always()
       continue-on-error: true
-      shell: pwsh
+      shell: powershell
       env:
         TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
@@ -374,6 +374,12 @@ runs:
           -ChangedFilesPath $env:CHANGED_FILES_PATH `
           -TemplatePath $templatePath `
           -OutputPath $outputPath
+
+        if (-not $?) {
+          throw "PR dashboard generation failed."
+        }
+
+        exit 0  
 
         exit $LASTEXITCODE
 
