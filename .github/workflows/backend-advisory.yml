@@ -11,10 +11,7 @@ permissions:
 jobs:
   backend-pr-quality:
     name: Backend PR Quality
-    runs-on:
-      - self-hosted
-      - Windows
-      - X64
+    runs-on: windows-latest
 
     timeout-minutes: 30
 
