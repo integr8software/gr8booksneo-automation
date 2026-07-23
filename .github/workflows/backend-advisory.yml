@@ -145,7 +145,7 @@ jobs:
                 `pr-${issueNumber}/QA-Report.png?raw=1&run=${context.runId}`;
 
               dashboardSection = `
-            <details open>
+            <details>
             <summary><strong>📊 View QA Dashboard</strong></summary>
 
             ![Backend PR Quality Dashboard](${imageUrl})
@@ -155,7 +155,7 @@ jobs:
             }
 
             const body = `${marker}
-            ## ${statusIcon} Backend PR Quality: ${statusText}
+            ## ${passed ? "✅ Ready for Review" : "❌ QA Review Required"}
 
             ${dashboardSection}
 

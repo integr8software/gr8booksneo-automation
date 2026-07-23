@@ -25,7 +25,7 @@ try {
 
     const page = await browser.newPage({
         viewport: {
-            width: 1360,
+            width: 1600,
             height: 900
         }
     });
