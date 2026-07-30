@@ -18,52 +18,74 @@ if (!existsSync(htmlPath)) {
 await mkdir(dirname(pngPath), { recursive: true });
 
 const browser = await chromium.launch({
-    headless: true
+    headless: true,
 });
 
 try {
-
     const page = await browser.newPage({
         viewport: {
             width: 1600,
-            height: 900
-        }
+            height: 900,
+        },
+    });
+
+    page.on("console", (message) => {
+        console.log(`[BROWSER ${message.type().toUpperCase()}] ${message.text()}`);
+    });
+
+    page.on("pageerror", (error) => {
+        console.error(`[BROWSER ERROR] ${error.message}`);
     });
 
     console.log("[INFO] Opening dashboard...");
 
     await page.goto(pathToFileURL(htmlPath).href, {
-        waitUntil: "networkidle"
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
     });
 
-    console.log("[INFO] Waiting for dashboard...");
-
-    await page.waitForSelector(".app-window", {
-        timeout: 15000
-    });
-
-    console.log("[INFO] Taking screenshot...");
+    console.log("[INFO] Waiting for dashboard element...");
 
     const dashboard = page.locator(".app-window");
 
+    await dashboard.waitFor({
+        state: "attached",
+        timeout: 60_000,
+    });
+
+    await page.waitForTimeout(1_000);
+
+    const box = await dashboard.boundingBox();
+
+    if (!box || box.width <= 0 || box.height <= 0) {
+        throw new Error(
+            "Dashboard element exists but has no visible dimensions."
+        );
+    }
+
+    console.log(
+        `[INFO] Dashboard size: ${Math.round(box.width)}x${Math.round(box.height)}`
+    );
+
+    console.log("[INFO] Taking screenshot...");
+
     await dashboard.screenshot({
         path: pngPath,
-        animations: "disabled"
+        animations: "disabled",
+        timeout: 60_000,
     });
 
     console.log("[SUCCESS] Screenshot created.");
+} catch (error) {
+    console.error("[ERROR] Dashboard screenshot generation failed.");
 
-}
-catch (err) {
+    if (error instanceof Error) {
+        console.error(error.stack ?? error.message);
+    } else {
+        console.error(error);
+    }
 
-    console.error("[ERROR]");
-    console.error(err);
-
-    process.exit(1);
-
-}
-finally {
-
+    process.exitCode = 1;
+} finally {
     await browser.close();
-
 }
