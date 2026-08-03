@@ -1,0 +1,354 @@
+name: Frontend PR Quality Analysis
+description: Run frontend PR quality detectors and generate Markdown, HTML, and PNG reports.
+
+inputs:
+  repository-root:
+    description: Absolute path to the checked-out frontend repository.
+    required: true
+
+  base-reference:
+    description: Base commit SHA or branch used for PR diff analysis.
+    required: true
+
+  head-reference:
+    description: Head commit SHA or branch used for PR diff analysis.
+    required: true
+
+  maximum-findings-per-rule:
+    description: Maximum number of findings retained for each rule.
+    required: false
+    default: "50"
+
+  fail-on-blockers:
+    description: Fail the action when blocker findings exist.
+    required: false
+    default: "true"
+
+  fail-on-warnings:
+    description: Fail the action when warning findings exist.
+    required: false
+    default: "false"
+
+  automation-root:
+    description: Absolute path to the gr8booksneo-automation repository.
+    required: false
+    default: ${{ github.action_path }}/../../..
+
+outputs:
+  report-json:
+    description: Absolute path to the generated frontend JSON report.
+    value: ${{ steps.paths.outputs.report-json }}
+
+  report-markdown:
+    description: Absolute path to the generated frontend Markdown report.
+    value: ${{ steps.paths.outputs.report-markdown }}
+
+  report-html:
+    description: Absolute path to the generated frontend HTML report.
+    value: ${{ steps.paths.outputs.report-html }}
+
+  report-png:
+    description: Absolute path to the generated frontend PNG report.
+    value: ${{ steps.paths.outputs.report-png }}
+
+  decision:
+    description: Frontend PR quality decision label.
+    value: ${{ steps.result.outputs.decision }}
+
+  status:
+    description: Frontend PR quality status.
+    value: ${{ steps.result.outputs.status }}
+
+  blockers:
+    description: Number of blocker findings.
+    value: ${{ steps.result.outputs.blockers }}
+
+  warnings:
+    description: Number of warning findings.
+    value: ${{ steps.result.outputs.warnings }}
+
+  findings:
+    description: Total number of findings.
+    value: ${{ steps.result.outputs.findings }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve frontend QA paths
+      id: paths
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $automationRoot = [System.IO.Path]::GetFullPath(
+          "${{ inputs.automation-root }}"
+        )
+
+        $repositoryRoot = [System.IO.Path]::GetFullPath(
+          "${{ inputs.repository-root }}"
+        )
+
+        $reportsDirectory = Join-Path $automationRoot "reports"
+
+        $reportJson = Join-Path `
+          $reportsDirectory `
+          "frontend-quality-results.json"
+
+        $reportMarkdown = Join-Path `
+          $reportsDirectory `
+          "Frontend-QA-Report.md"
+
+        $reportHtml = Join-Path `
+          $reportsDirectory `
+          "Frontend-QA-Report.html"
+
+        $reportPng = Join-Path `
+          $reportsDirectory `
+          "Frontend-QA-Report.png"
+
+        if (-not (Test-Path -LiteralPath $automationRoot)) {
+          throw "Automation root does not exist: $automationRoot"
+        }
+
+        if (-not (Test-Path -LiteralPath $repositoryRoot)) {
+          throw "Frontend repository root does not exist: $repositoryRoot"
+        }
+
+        New-Item `
+          -ItemType Directory `
+          -Path $reportsDirectory `
+          -Force |
+          Out-Null
+
+        "automation-root=$automationRoot" >> $env:GITHUB_OUTPUT
+        "repository-root=$repositoryRoot" >> $env:GITHUB_OUTPUT
+        "reports-directory=$reportsDirectory" >> $env:GITHUB_OUTPUT
+        "report-json=$reportJson" >> $env:GITHUB_OUTPUT
+        "report-markdown=$reportMarkdown" >> $env:GITHUB_OUTPUT
+        "report-html=$reportHtml" >> $env:GITHUB_OUTPUT
+        "report-png=$reportPng" >> $env:GITHUB_OUTPUT
+
+    - name: Verify frontend QA files
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $automationRoot = "${{ steps.paths.outputs.automation-root }}"
+
+        $requiredFiles = @(
+          "configs\frontend-standards.json",
+          "schemas\frontend-resultschema.json",
+          "scripts\frontend\analyze-frontend.mjs",
+          "scripts\frontend\generate-summary.ps1",
+          "scripts\frontend\capture-dashboard.mjs",
+          "scripts\detector\hooks.mjs",
+          "scripts\detector\types.mjs",
+          "scripts\detector\fetching.mjs",
+          "scripts\detector\structure.mjs",
+          "scripts\detector\ui.mjs",
+          "scripts\detector\constants.mjs",
+          "scripts\detector\data.mjs"
+        )
+
+        foreach ($relativePath in $requiredFiles) {
+          $absolutePath = Join-Path $automationRoot $relativePath
+
+          if (-not (Test-Path -LiteralPath $absolutePath)) {
+            throw "Required frontend QA file is missing: $absolutePath"
+          }
+        }
+
+        Write-Host "Frontend QA files verified."
+
+    - name: Verify Node.js
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        node --version
+        npm --version
+
+    - name: Verify Playwright
+      shell: powershell
+      working-directory: ${{ steps.paths.outputs.automation-root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        node -e "import('playwright').then(() => console.log('Playwright package is available.'))"
+
+    - name: Run frontend quality analysis
+      id: analyze
+      shell: powershell
+      working-directory: ${{ steps.paths.outputs.automation-root }}
+      run: |
+        $ErrorActionPreference = "Continue"
+
+        $arguments = @(
+          ".\scripts\frontend\analyze-frontend.mjs",
+          "--repository-root",
+          "${{ steps.paths.outputs.repository-root }}",
+          "--base",
+          "${{ inputs.base-reference }}",
+          "--head",
+          "${{ inputs.head-reference }}",
+          "--output-directory",
+          "${{ steps.paths.outputs.reports-directory }}",
+          "--maximum-findings-per-rule",
+          "${{ inputs.maximum-findings-per-rule }}",
+          "--verbose"
+        )
+
+        if ("${{ inputs.fail-on-blockers }}" -eq "true") {
+          $arguments += "--fail-on-blockers"
+        }
+        else {
+          $arguments += "--no-fail-on-blockers"
+        }
+
+        if ("${{ inputs.fail-on-warnings }}" -eq "true") {
+          $arguments += "--fail-on-warnings"
+        }
+        else {
+          $arguments += "--no-fail-on-warnings"
+        }
+
+        & node @arguments
+        $analysisExitCode = $LASTEXITCODE
+
+        "analysis-exit-code=$analysisExitCode" >> $env:GITHUB_OUTPUT
+
+        if (
+          $analysisExitCode -ne 0 -and
+          $analysisExitCode -ne 1
+        ) {
+          throw "Frontend analyzer failed with exit code $analysisExitCode."
+        }
+
+        exit 0
+
+    - name: Generate frontend QA summary
+      shell: powershell
+      working-directory: ${{ steps.paths.outputs.automation-root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        powershell `
+          -NoProfile `
+          -ExecutionPolicy Bypass `
+          -File ".\scripts\frontend\generate-summary.ps1" `
+          -InputPath "${{ steps.paths.outputs.report-json }}" `
+          -OutputDirectory "${{ steps.paths.outputs.reports-directory }}" `
+          -MaximumFindings "${{ inputs.maximum-findings-per-rule }}"
+
+    - name: Capture frontend QA dashboard
+      shell: powershell
+      working-directory: ${{ steps.paths.outputs.automation-root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        node ".\scripts\frontend\capture-dashboard.mjs" `
+          --html "${{ steps.paths.outputs.report-html }}" `
+          --output "${{ steps.paths.outputs.report-png }}" `
+          --width 1440 `
+          --height 1200 `
+          --full-page
+
+    - name: Read frontend QA result
+      id: result
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $reportPath = "${{ steps.paths.outputs.report-json }}"
+
+        if (-not (Test-Path -LiteralPath $reportPath)) {
+          throw "Frontend QA report was not generated: $reportPath"
+        }
+
+        $report = Get-Content `
+          -LiteralPath $reportPath `
+          -Raw `
+          -Encoding UTF8 |
+          ConvertFrom-Json
+
+        $decision = [string]$report.decision.label
+        $status = [string]$report.decision.status
+        $blockers = [int]$report.summary.blockers
+        $warnings = [int]$report.summary.warnings
+        $findings = [int]$report.summary.total
+
+        "decision=$decision" >> $env:GITHUB_OUTPUT
+        "status=$status" >> $env:GITHUB_OUTPUT
+        "blockers=$blockers" >> $env:GITHUB_OUTPUT
+        "warnings=$warnings" >> $env:GITHUB_OUTPUT
+        "findings=$findings" >> $env:GITHUB_OUTPUT
+
+        Write-Host ""
+        Write-Host "Frontend PR Quality Result"
+        Write-Host "--------------------------"
+        Write-Host "Decision : $decision"
+        Write-Host "Status   : $status"
+        Write-Host "Findings : $findings"
+        Write-Host "Blockers : $blockers"
+        Write-Host "Warnings : $warnings"
+        Write-Host ""
+
+    - name: Write GitHub job summary
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $reportPath = "${{ steps.paths.outputs.report-json }}"
+        $report = Get-Content `
+          -LiteralPath $reportPath `
+          -Raw `
+          -Encoding UTF8 |
+          ConvertFrom-Json
+
+        $decision = [string]$report.decision.label
+        $status = [string]$report.decision.status
+        $changedFiles = [int]$report.analysis.changedFileCount
+        $findings = [int]$report.summary.total
+        $blockers = [int]$report.summary.blockers
+        $warnings = [int]$report.summary.warnings
+        $information = [int]$report.summary.info
+
+        $icon = switch ($status) {
+          "blocked" { "❌" }
+          "warning" { "⚠️" }
+          default { "✅" }
+        }
+
+        @"
+        # $icon Frontend PR Quality
+
+        **Decision:** $decision
+
+        | Metric | Count |
+        |---|---:|
+        | Changed files | $changedFiles |
+        | Findings | $findings |
+        | Blockers | $blockers |
+        | Warnings | $warnings |
+        | Information | $information |
+
+        Generated reports:
+
+        - `Frontend-QA-Report.md`
+        - `Frontend-QA-Report.html`
+        - `Frontend-QA-Report.png`
+        - `frontend-quality-results.json`
+        "@ >> $env:GITHUB_STEP_SUMMARY
+
+    - name: Enforce frontend QA decision
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $analysisExitCode = [int]"${{ steps.analyze.outputs.analysis-exit-code }}"
+
+        if ($analysisExitCode -eq 1) {
+          throw "Frontend PR quality checks require changes."
+        }
+
+        Write-Host "Frontend PR quality checks passed."

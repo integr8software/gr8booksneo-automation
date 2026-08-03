@@ -5,7 +5,7 @@
   "description": "Centralized PR-focused QA automation toolkit for Gr8Books Neo.",
   "type": "commonjs",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "check:madge": "madge --version",

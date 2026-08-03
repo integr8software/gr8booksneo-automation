@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gr8booksneo.local/schemas/frontend-resultschema.json",
+  "title": "Gr8BooksNeo Frontend PR Quality Results",
+  "description": "Schema for frontend PR quality detector results.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "repository",
+    "analysis",
+    "summary",
+    "categories",
+    "findings",
+    "decision"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository": {
+      "$ref": "#/$defs/repository"
+    },
+    "analysis": {
+      "$ref": "#/$defs/analysis"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/categoryResult"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "decision": {
+      "$ref": "#/$defs/decision"
+    }
+  },
+  "$defs": {
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "root",
+        "branch",
+        "baseReference",
+        "headReference"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string"
+        },
+        "baseReference": {
+          "type": "string"
+        },
+        "headReference": {
+          "type": "string"
+        },
+        "commitSha": {
+          "type": "string"
+        },
+        "pullRequestNumber": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "sourceRoot",
+        "changedFiles",
+        "analyzedFiles",
+        "skippedFiles",
+        "durationMilliseconds"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "changed-files",
+            "full-repository"
+          ]
+        },
+        "sourceRoot": {
+          "type": "string"
+        },
+        "changedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "analyzedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skippedFiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/skippedFile"
+          }
+        },
+        "durationMilliseconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "skippedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "reason"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "totalFindings",
+        "blockers",
+        "warnings",
+        "suggestions",
+        "info",
+        "passedCategories",
+        "warningCategories",
+        "blockedCategories"
+      ],
+      "properties": {
+        "totalFindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blockers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suggestions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passedCategories": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warningCategories": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blockedCategories": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "categoryResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "status",
+        "count",
+        "blockers",
+        "warnings",
+        "suggestions",
+        "info",
+        "details"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "hooks",
+            "types",
+            "ui",
+            "constants",
+            "data",
+            "fetching",
+            "structure",
+            "build"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/categoryStatus"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blockers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "suggestions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "categoryStatus": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "warning",
+        "blocked",
+        "skipped",
+        "error"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "blocker",
+        "warning",
+        "suggestion",
+        "info"
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "ruleId",
+        "severity",
+        "title",
+        "message",
+        "file",
+        "line",
+        "column",
+        "detector"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "hooks",
+            "types",
+            "ui",
+            "constants",
+            "data",
+            "fetching",
+            "structure",
+            "build"
+          ]
+        },
+        "ruleId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "endLine": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "endColumn": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "codeSnippet": {
+          "type": "string"
+        },
+        "relatedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "detector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "fingerprint": {
+          "type": "string"
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "label",
+        "shouldFail",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "ready-with-warnings",
+            "blocked",
+            "error"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "enum": [
+            "Ready for Review",
+            "Ready with Warnings",
+            "Changes Required",
+            "Analysis Failed"
+          ]
+        },
+        "shouldFail": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

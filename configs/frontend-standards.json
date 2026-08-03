@@ -1,0 +1,400 @@
+{
+  "$schemaVersion": "1.0.0",
+  "name": "Gr8BooksNeo Frontend Engineering Standards",
+  "description": "Configuration used by the frontend PR quality detector.",
+  "sourceRoot": "app/src",
+  "supportedExtensions": [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx"
+  ],
+  "ignoredPaths": [
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+    "coverage",
+    "reports",
+    "public",
+    "generated",
+    "__generated__"
+  ],
+  "generatedCodePatterns": [
+    "/generated/",
+    "/__generated__/",
+    ".generated.ts",
+    ".generated.tsx"
+  ],
+  "severity": {
+    "blocker": "blocker",
+    "warning": "warning",
+    "suggestion": "suggestion",
+    "info": "info"
+  },
+  "hooks": {
+    "enabled": true,
+    "requireUsePrefix": true,
+    "validHookFilePatterns": [
+      "^use[A-Z][A-Za-z0-9]*\\.(ts|tsx|js|jsx)$"
+    ],
+    "sharedHookDirectories": [
+      "app/src/hooks",
+      "app/src/shared/hooks"
+    ],
+    "featureHookDirectoryNames": [
+      "hooks"
+    ],
+    "disallowApiCallsInUi": true,
+    "requireTanstackQueryForServerState": true,
+    "allowedLocalStateHooks": [
+      "useState",
+      "useReducer",
+      "useRef",
+      "useMemo",
+      "useCallback"
+    ],
+    "commonReusableFlows": [
+      "authentication",
+      "user-profile",
+      "permissions",
+      "lookup-data",
+      "pagination",
+      "mutations"
+    ],
+    "rules": {
+      "invalidHookName": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "hookOutsideExpectedLocation": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "apiCallInsideUi": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "possibleDuplicateHook": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "serverStateWithoutTanstackQuery": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "types": {
+    "enabled": true,
+    "openApiIsSourceOfTruth": true,
+    "preferOrvalGeneratedTypes": true,
+    "allowAny": false,
+    "sharedTypeDirectories": [
+      "app/src/types",
+      "app/src/shared/types",
+      "app/src/lib/types"
+    ],
+    "featureTypeDirectoryNames": [
+      "types"
+    ],
+    "allowedManualTypePurposes": [
+      "component-props",
+      "form-values",
+      "local-ui-state",
+      "table-view-model",
+      "transformed-data",
+      "normalized-model",
+      "combined-api-response",
+      "temporary-schema-gap"
+    ],
+    "temporaryTypeMarkers": [
+      "TODO",
+      "FIXME",
+      "ticket",
+      "temporary"
+    ],
+    "rules": {
+      "explicitAnyIntroduced": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "manualApiDto": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "possibleDuplicateType": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "typeOutsideExpectedLocation": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "temporaryTypeWithoutReference": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "ui": {
+    "enabled": true,
+    "uiRootDirectories": [
+      "app/src/ui"
+    ],
+    "componentExtensions": [
+      ".tsx",
+      ".jsx"
+    ],
+    "requirePascalCaseFileNames": true,
+    "maxRecommendedLines": 500,
+    "maxBlockingLines": 1000,
+    "referenceModule": "app/src/ui/modules/system-administration/approval-management",
+    "mixedResponsibilitySignals": [
+      "axios",
+      "fetch(",
+      "useQuery",
+      "useMutation",
+      "interface ",
+      "type ",
+      "mockData",
+      "dummyData"
+    ],
+    "rules": {
+      "invalidComponentFileName": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "largeComponent": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "extremelyLargeComponent": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "mixedUiResponsibilities": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "possibleDuplicateUi": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "constants": {
+    "enabled": true,
+    "rootDirectories": [
+      "app/src/constants"
+    ],
+    "detectRepeatedLiterals": true,
+    "minimumOccurrences": 3,
+    "minimumStringLength": 3,
+    "ignoredLiterals": [
+      "",
+      " ",
+      "true",
+      "false",
+      "null",
+      "undefined",
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE"
+    ],
+    "categories": [
+      "status",
+      "route",
+      "query-key",
+      "permission",
+      "storage-key",
+      "api-path",
+      "date-format",
+      "pagination-default"
+    ],
+    "rules": {
+      "repeatedLiteral": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "hardcodedStatus": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "hardcodedPermission": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "hardcodedQueryKey": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "hardcodedStorageKey": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "data": {
+    "enabled": true,
+    "dataDirectories": [
+      "app/src/data"
+    ],
+    "mockIndicators": [
+      "mock",
+      "dummy",
+      "fake",
+      "fixture",
+      "sample",
+      "placeholder"
+    ],
+    "mockFilePatterns": [
+      "(^|\\/)(mock|mocks|fixtures|dummy|fake|sample)(\\/|$)",
+      "(mock|dummy|fake|fixture|sample)[A-Za-z0-9_-]*\\.(ts|tsx|js|jsx|json)$"
+    ],
+    "allowMocksWhenBackendUnavailable": true,
+    "requireMockSeparation": true,
+    "rules": {
+      "mockDataDetected": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "mockDataMixedWithProductionCode": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "mockDataAlongsideRealApi": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "fetching": {
+    "enabled": true,
+    "preferredClient": "axios",
+    "serviceDirectories": [
+      "app/src/services"
+    ],
+    "disallowFetch": true,
+    "disallowDirectAxiosInUi": true,
+    "requireLoadingState": true,
+    "requireErrorState": true,
+    "requireEmptyState": true,
+    "loadingIdentifiers": [
+      "isLoading",
+      "isPending",
+      "loading",
+      "pending"
+    ],
+    "errorIdentifiers": [
+      "isError",
+      "error",
+      "hasError"
+    ],
+    "emptyStateIdentifiers": [
+      "isEmpty",
+      "empty",
+      "EmptyState",
+      "NoData",
+      "NoRecords"
+    ],
+    "rules": {
+      "fetchUsage": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "directAxiosInUi": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "apiCallOutsideServiceLayer": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "missingLoadingState": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "missingErrorState": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "missingEmptyState": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "structure": {
+    "enabled": true,
+    "requiredDirectories": [
+      "constants",
+      "data",
+      "hooks",
+      "services",
+      "types",
+      "ui",
+      "utils",
+      "validations"
+    ],
+    "root": "app/src",
+    "rules": {
+      "missingRequiredDirectory": {
+        "enabled": true,
+        "severity": "blocker"
+      },
+      "misplacedHook": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "misplacedType": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "misplacedService": {
+        "enabled": true,
+        "severity": "warning"
+      },
+      "misplacedUiComponent": {
+        "enabled": true,
+        "severity": "warning"
+      }
+    }
+  },
+  "build": {
+    "enabled": true,
+    "commands": {
+      "install": "npm ci",
+      "lint": "npm run lint",
+      "typecheck": "npx tsc --noEmit",
+      "build": "npm run build"
+    },
+    "rules": {
+      "lintFailure": {
+        "severity": "blocker"
+      },
+      "typeScriptFailure": {
+        "severity": "blocker"
+      },
+      "buildFailure": {
+        "severity": "blocker"
+      }
+    }
+  },
+  "reporting": {
+    "reportTitle": "Frontend PR Quality Report",
+    "reportSubtitle": "Automated detection for Hooks, Types, UI, Constants and Data consistency",
+    "outputDirectory": "reports",
+    "rawDirectory": "reports/raw",
+    "resultsDirectory": "reports/results",
+    "markdownFile": "Frontend-QA-Report.md",
+    "htmlFile": "Frontend-QA-Report.html",
+    "pngFile": "Frontend-QA-Report.png",
+    "jsonFile": "frontend-quality-results.json",
+    "failOnBlockers": true,
+    "failOnWarnings": false,
+    "maximumFindingsPerCategory": 20
+  }
+}
