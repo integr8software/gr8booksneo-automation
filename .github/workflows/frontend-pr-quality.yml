@@ -44,10 +44,7 @@ on:
 jobs:
   frontend-pr-quality:
     name: Frontend PR Quality
-    runs-on:
-      - self-hosted
-      - Windows
-      - X64
+    runs-on: windows-latest
 
     permissions:
       contents: read
@@ -110,9 +107,9 @@ jobs:
           automation-root: ${{ github.workspace }}\qa-automation
           base-reference: ${{ steps.refs.outputs.base-reference }}
           head-reference: ${{ steps.refs.outputs.head-reference }}
-          maximum-findings-per-rule: ${{ inputs.maximum-findings-per-rule || 50 }}
-          fail-on-blockers: ${{ inputs.fail-on-blockers || true }}
-          fail-on-warnings: ${{ inputs.fail-on-warnings || false }}
+          maximum-findings-per-rule: ${{ inputs.maximum-findings-per-rule }}
+          fail-on-blockers: ${{ inputs.fail-on-blockers }}
+          fail-on-warnings: ${{ inputs.fail-on-warnings }}
 
       - name: Upload frontend QA reports
         if: always()
