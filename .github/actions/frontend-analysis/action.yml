@@ -1,5 +1,5 @@
 name: Frontend PR Quality Analysis
-description: Run frontend PR quality detectors and generate Markdown, HTML, and PNG reports.
+description: Run frontend PR quality detectors and generate JSON, Markdown, HTML, and PNG reports.
 
 inputs:
   repository-root:
@@ -28,11 +28,6 @@ inputs:
     description: Fail the action when warning findings exist.
     required: false
     default: "false"
-
-  automation-root:
-    description: Absolute path to the gr8booksneo-automation repository.
-    required: false
-    default: ${{ github.action_path }}/../../..
 
 outputs:
   report-json:
@@ -73,22 +68,34 @@ outputs:
 
 runs:
   using: composite
+
   steps:
     - name: Resolve frontend QA paths
       id: paths
       shell: powershell
+      env:
+        INPUT_REPOSITORY_ROOT: ${{ inputs.repository-root }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         $ErrorActionPreference = "Stop"
 
         $automationRoot = [System.IO.Path]::GetFullPath(
-          "${{ inputs.automation-root }}"
+          (Join-Path $env:ACTION_PATH "..\..\..")
         )
 
         $repositoryRoot = [System.IO.Path]::GetFullPath(
-          "${{ inputs.repository-root }}"
+          $env:INPUT_REPOSITORY_ROOT
         )
 
-        $reportsDirectory = Join-Path $automationRoot "reports"
+        if (-not (Test-Path -LiteralPath $automationRoot -PathType Container)) {
+          throw "Automation root does not exist: $automationRoot"
+        }
+
+        if (-not (Test-Path -LiteralPath $repositoryRoot -PathType Container)) {
+          throw "Frontend repository root does not exist: $repositoryRoot"
+        }
+
+        $reportsDirectory = Join-Path $repositoryRoot "reports"
 
         $reportJson = Join-Path `
           $reportsDirectory `
@@ -106,14 +113,6 @@ runs:
           $reportsDirectory `
           "Frontend-QA-Report.png"
 
-        if (-not (Test-Path -LiteralPath $automationRoot)) {
-          throw "Automation root does not exist: $automationRoot"
-        }
-
-        if (-not (Test-Path -LiteralPath $repositoryRoot)) {
-          throw "Frontend repository root does not exist: $repositoryRoot"
-        }
-
         New-Item `
           -ItemType Directory `
           -Path $reportsDirectory `
@@ -128,14 +127,24 @@ runs:
         "report-html=$reportHtml" >> $env:GITHUB_OUTPUT
         "report-png=$reportPng" >> $env:GITHUB_OUTPUT
 
+        Write-Host ""
+        Write-Host "Frontend QA paths"
+        Write-Host "-----------------"
+        Write-Host "Automation root : $automationRoot"
+        Write-Host "Repository root : $repositoryRoot"
+        Write-Host "Reports         : $reportsDirectory"
+        Write-Host ""
+
     - name: Verify frontend QA files
       shell: powershell
+      env:
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        $automationRoot = "${{ steps.paths.outputs.automation-root }}"
-
         $requiredFiles = @(
+          "package.json",
+          "package-lock.json",
           "configs\frontend-standards.json",
           "schemas\frontend-resultschema.json",
           "scripts\frontend\analyze-frontend.mjs",
@@ -151,9 +160,11 @@ runs:
         )
 
         foreach ($relativePath in $requiredFiles) {
-          $absolutePath = Join-Path $automationRoot $relativePath
+          $absolutePath = Join-Path `
+            $env:AUTOMATION_ROOT `
+            $relativePath
 
-          if (-not (Test-Path -LiteralPath $absolutePath)) {
+          if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
             throw "Required frontend QA file is missing: $absolutePath"
           }
         }
@@ -168,105 +179,217 @@ runs:
         node --version
         npm --version
 
-    - name: Verify Playwright
+    - name: Install frontend QA dependencies
       shell: powershell
-      working-directory: ${{ steps.paths.outputs.automation-root }}
+      env:
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        node -e "import('playwright').then(() => console.log('Playwright package is available.'))"
+        Push-Location $env:AUTOMATION_ROOT
+
+        try {
+          npm ci
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm ci failed with exit code $LASTEXITCODE."
+          }
+
+          npx playwright install chromium
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright Chromium installation failed with exit code $LASTEXITCODE."
+          }
+        }
+        finally {
+          Pop-Location
+        }
+
+    - name: Verify frontend QA modules
+      shell: powershell
+      env:
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location $env:AUTOMATION_ROOT
+
+        try {
+          node -e "import('playwright').then(() => console.log('Playwright package is available.'))"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright module verification failed."
+          }
+
+          node -e "import('./scripts/frontend/analyze-frontend.mjs').then(m => { if (typeof m.analyzeFrontend !== 'function') throw new Error('analyzeFrontend export is missing'); console.log('Frontend analyzer is available.'); })"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend analyzer verification failed."
+          }
+        }
+        finally {
+          Pop-Location
+        }
 
     - name: Run frontend quality analysis
       id: analyze
       shell: powershell
-      working-directory: ${{ steps.paths.outputs.automation-root }}
+      env:
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository-root }}
+        REPORTS_DIRECTORY: ${{ steps.paths.outputs.reports-directory }}
+        BASE_REFERENCE: ${{ inputs.base-reference }}
+        HEAD_REFERENCE: ${{ inputs.head-reference }}
+        MAXIMUM_FINDINGS: ${{ inputs.maximum-findings-per-rule }}
+        FAIL_ON_BLOCKERS: ${{ inputs.fail-on-blockers }}
+        FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
       run: |
         $ErrorActionPreference = "Continue"
 
-        $arguments = @(
-          ".\scripts\frontend\analyze-frontend.mjs",
-          "--repository-root",
-          "${{ steps.paths.outputs.repository-root }}",
-          "--base",
-          "${{ inputs.base-reference }}",
-          "--head",
-          "${{ inputs.head-reference }}",
-          "--output-directory",
-          "${{ steps.paths.outputs.reports-directory }}",
-          "--maximum-findings-per-rule",
-          "${{ inputs.maximum-findings-per-rule }}",
-          "--verbose"
-        )
+        Push-Location $env:AUTOMATION_ROOT
 
-        if ("${{ inputs.fail-on-blockers }}" -eq "true") {
-          $arguments += "--fail-on-blockers"
+        try {
+          $arguments = @(
+            ".\scripts\frontend\analyze-frontend.mjs",
+            "--repository-root",
+            $env:REPOSITORY_ROOT,
+            "--base",
+            $env:BASE_REFERENCE,
+            "--head",
+            $env:HEAD_REFERENCE,
+            "--output-directory",
+            $env:REPORTS_DIRECTORY,
+            "--maximum-findings-per-rule",
+            $env:MAXIMUM_FINDINGS,
+            "--verbose"
+          )
+
+          if ($env:FAIL_ON_BLOCKERS -eq "true") {
+            $arguments += "--fail-on-blockers"
+          }
+          else {
+            $arguments += "--no-fail-on-blockers"
+          }
+
+          if ($env:FAIL_ON_WARNINGS -eq "true") {
+            $arguments += "--fail-on-warnings"
+          }
+          else {
+            $arguments += "--no-fail-on-warnings"
+          }
+
+          & node @arguments
+          $analysisExitCode = $LASTEXITCODE
+
+          "analysis-exit-code=$analysisExitCode" >> $env:GITHUB_OUTPUT
+
+          if (
+            $analysisExitCode -ne 0 -and
+            $analysisExitCode -ne 1
+          ) {
+            throw "Frontend analyzer failed with exit code $analysisExitCode."
+          }
         }
-        else {
-          $arguments += "--no-fail-on-blockers"
-        }
-
-        if ("${{ inputs.fail-on-warnings }}" -eq "true") {
-          $arguments += "--fail-on-warnings"
-        }
-        else {
-          $arguments += "--no-fail-on-warnings"
-        }
-
-        & node @arguments
-        $analysisExitCode = $LASTEXITCODE
-
-        "analysis-exit-code=$analysisExitCode" >> $env:GITHUB_OUTPUT
-
-        if (
-          $analysisExitCode -ne 0 -and
-          $analysisExitCode -ne 1
-        ) {
-          throw "Frontend analyzer failed with exit code $analysisExitCode."
+        finally {
+          Pop-Location
         }
 
         exit 0
 
     - name: Generate frontend QA summary
+      if: always()
       shell: powershell
-      working-directory: ${{ steps.paths.outputs.automation-root }}
+      env:
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+        REPORT_JSON: ${{ steps.paths.outputs.report-json }}
+        REPORTS_DIRECTORY: ${{ steps.paths.outputs.reports-directory }}
+        MAXIMUM_FINDINGS: ${{ inputs.maximum-findings-per-rule }}
       run: |
         $ErrorActionPreference = "Stop"
+
+        if (-not (Test-Path -LiteralPath $env:REPORT_JSON -PathType Leaf)) {
+          throw "Frontend JSON report was not generated: $env:REPORT_JSON"
+        }
+
+        $summaryScript = Join-Path `
+          $env:AUTOMATION_ROOT `
+          "scripts\frontend\generate-summary.ps1"
 
         powershell `
           -NoProfile `
           -ExecutionPolicy Bypass `
-          -File ".\scripts\frontend\generate-summary.ps1" `
-          -InputPath "${{ steps.paths.outputs.report-json }}" `
-          -OutputDirectory "${{ steps.paths.outputs.reports-directory }}" `
-          -MaximumFindings "${{ inputs.maximum-findings-per-rule }}"
+          -File $summaryScript `
+          -InputPath $env:REPORT_JSON `
+          -OutputDirectory $env:REPORTS_DIRECTORY `
+          -MaximumFindings ([int]$env:MAXIMUM_FINDINGS)
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "Frontend QA summary generation failed with exit code $LASTEXITCODE."
+        }
 
     - name: Capture frontend QA dashboard
+      if: always()
       shell: powershell
-      working-directory: ${{ steps.paths.outputs.automation-root }}
+      env:
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+        REPORT_HTML: ${{ steps.paths.outputs.report-html }}
+        REPORT_PNG: ${{ steps.paths.outputs.report-png }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        node ".\scripts\frontend\capture-dashboard.mjs" `
-          --html "${{ steps.paths.outputs.report-html }}" `
-          --output "${{ steps.paths.outputs.report-png }}" `
-          --width 1440 `
-          --height 1200 `
-          --full-page
+        if (-not (Test-Path -LiteralPath $env:REPORT_HTML -PathType Leaf)) {
+          throw "Frontend HTML report was not generated: $env:REPORT_HTML"
+        }
+
+        $captureScript = Join-Path `
+          $env:AUTOMATION_ROOT `
+          "scripts\frontend\capture-dashboard.mjs"
+
+        Push-Location $env:AUTOMATION_ROOT
+
+        try {
+          node $captureScript `
+            --html $env:REPORT_HTML `
+            --output $env:REPORT_PNG `
+            --width 1440 `
+            --height 1200 `
+            --full-page
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend dashboard capture failed with exit code $LASTEXITCODE."
+          }
+        }
+        finally {
+          Pop-Location
+        }
+
+        if (-not (Test-Path -LiteralPath $env:REPORT_PNG -PathType Leaf)) {
+          throw "Frontend PNG report was not generated: $env:REPORT_PNG"
+        }
+
+        $pngSize = (Get-Item -LiteralPath $env:REPORT_PNG).Length
+
+        if ($pngSize -le 0) {
+          throw "Frontend PNG report is empty: $env:REPORT_PNG"
+        }
+
+        Write-Host "Frontend dashboard PNG size: $pngSize bytes"
 
     - name: Read frontend QA result
+      if: always()
       id: result
       shell: powershell
+      env:
+        REPORT_JSON: ${{ steps.paths.outputs.report-json }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        $reportPath = "${{ steps.paths.outputs.report-json }}"
-
-        if (-not (Test-Path -LiteralPath $reportPath)) {
-          throw "Frontend QA report was not generated: $reportPath"
+        if (-not (Test-Path -LiteralPath $env:REPORT_JSON -PathType Leaf)) {
+          throw "Frontend QA report was not generated: $env:REPORT_JSON"
         }
 
         $report = Get-Content `
-          -LiteralPath $reportPath `
+          -LiteralPath $env:REPORT_JSON `
           -Raw `
           -Encoding UTF8 |
           ConvertFrom-Json
@@ -294,13 +417,20 @@ runs:
         Write-Host ""
 
     - name: Write GitHub job summary
+      if: always()
       shell: powershell
+      env:
+        REPORT_JSON: ${{ steps.paths.outputs.report-json }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        $reportPath = "${{ steps.paths.outputs.report-json }}"
+        if (-not (Test-Path -LiteralPath $env:REPORT_JSON -PathType Leaf)) {
+          Write-Warning "Frontend JSON report is unavailable; GitHub summary was not generated."
+          exit 0
+        }
+
         $report = Get-Content `
-          -LiteralPath $reportPath `
+          -LiteralPath $env:REPORT_JSON `
           -Raw `
           -Encoding UTF8 |
           ConvertFrom-Json
@@ -334,21 +464,37 @@ runs:
 
         Generated reports:
 
-        - `Frontend-QA-Report.md`
-        - `Frontend-QA-Report.html`
-        - `Frontend-QA-Report.png`
-        - `frontend-quality-results.json`
+        - ``frontend-quality-results.json``
+        - ``Frontend-QA-Report.md``
+        - ``Frontend-QA-Report.html``
+        - ``Frontend-QA-Report.png``
         "@ >> $env:GITHUB_STEP_SUMMARY
 
     - name: Enforce frontend QA decision
+      if: always()
       shell: powershell
+      env:
+        ANALYSIS_EXIT_CODE: ${{ steps.analyze.outputs.analysis-exit-code }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        $analysisExitCode = [int]"${{ steps.analyze.outputs.analysis-exit-code }}"
-
-        if ($analysisExitCode -eq 1) {
-          throw "Frontend PR quality checks require changes."
+        if ([string]::IsNullOrWhiteSpace($env:ANALYSIS_EXIT_CODE)) {
+          throw "Frontend analyzer did not provide an exit code."
         }
 
-        Write-Host "Frontend PR quality checks passed."
+        $analysisExitCode = [int]$env:ANALYSIS_EXIT_CODE
+
+        switch ($analysisExitCode) {
+          0 {
+            Write-Host "Frontend PR quality checks passed."
+            exit 0
+          }
+
+          1 {
+            throw "Frontend PR quality checks require changes."
+          }
+
+          default {
+            throw "Frontend PR quality analysis failed with exit code $analysisExitCode."
+          }
+        }
