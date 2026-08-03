@@ -45,6 +45,7 @@ jobs:
   frontend-pr-quality:
     name: Frontend PR Quality
     runs-on: windows-latest
+    timeout-minutes: 30
 
     permissions:
       contents: read
@@ -62,11 +63,14 @@ jobs:
           ref: develop
           path: qa-automation
           fetch-depth: 1
+          token: ${{ secrets.QA_AUTOMATION_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: npm
+          cache-dependency-path: qa-automation/package-lock.json
 
       - name: Install QA dependencies
         shell: powershell
@@ -75,7 +79,6 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           npm ci
-
           npx playwright install chromium
 
       - name: Resolve references
