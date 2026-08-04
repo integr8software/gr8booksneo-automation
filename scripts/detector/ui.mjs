@@ -285,6 +285,76 @@ function checkComponentSize({
   }
 }
 
+function stripImportStatements(source) {
+  return source
+    .replace(
+      /^\s*import(?:\s+type)?[\s\S]*?from\s*["'][^"']+["'];?\s*$/gm,
+      "",
+    )
+    .replace(
+      /^\s*import\s*["'][^"']+["'];?\s*$/gm,
+      "",
+    );
+}
+
+function findFirstResponsibilitySignal(source) {
+  const executableSource = stripImportStatements(source);
+
+  const signals = [
+    {
+      id: "direct-axios",
+      label: "direct Axios request",
+      pattern:
+        /\baxios\s*\.\s*(?:get|post|put|patch|delete|request)\s*\(/,
+      confidence: "high",
+    },
+    {
+      id: "direct-fetch",
+      label: "direct fetch request",
+      pattern: /\bfetch\s*\(/,
+      confidence: "high",
+    },
+    {
+      id: "inline-query",
+      label: "inline TanStack Query server-state hook",
+      pattern:
+        /\b(?:useQuery|useMutation|useInfiniteQuery|useSuspenseQuery)\s*\(\s*\{/,
+      confidence: "medium",
+    },
+    {
+      id: "inline-mock-data",
+      label: "inline mock or dummy dataset",
+      pattern:
+        /\b(?:mockData|dummyData|fakeData|sampleData|fixtureData)\b/,
+      confidence: "high",
+    },
+    {
+      id: "browser-storage-write",
+      label: "browser storage side effect",
+      pattern:
+        /\b(?:localStorage|sessionStorage)\s*\.\s*(?:setItem|removeItem)\s*\(/,
+      confidence: "medium",
+    },
+  ];
+
+  for (const signal of signals) {
+    const match = signal.pattern.exec(executableSource);
+
+    if (!match) {
+      continue;
+    }
+
+    return {
+      ...signal,
+      index: match.index,
+      matchedText: match[0],
+      executableSource,
+    };
+  }
+
+  return null;
+}
+
 function checkMixedResponsibilities({
   file,
   source,
@@ -301,38 +371,40 @@ function checkMixedResponsibilities({
     return;
   }
 
-  const configuredSignals =
-    config.ui?.mixedResponsibilitySignals ?? [];
+  /*
+   * Type imports, interfaces, type aliases, props, and local UI helper types
+   * are normal component code. They must not be treated as mixed
+   * responsibilities. Only executable non-presentation behavior is checked.
+   */
+  const signal = findFirstResponsibilitySignal(source);
 
-  const matches = getSignalMatches(source, configuredSignals);
-
-  if (matches.length === 0) {
+  if (!signal) {
     return;
   }
 
-  const uniqueSignals = [
-    ...new Set(matches.map((match) => match.signal)),
-  ];
-
-  const firstMatch = matches[0];
+  const line = getLineNumber(
+    signal.executableSource,
+    signal.index,
+  );
 
   findings.push(
     createFinding({
       ruleId: "ui.mixedUiResponsibilities",
       severity: rule.severity,
-      title: "UI component may contain mixed responsibilities",
+      title: "UI component may contain non-presentation logic",
       message:
-        `The component contains non-presentation signals: ${uniqueSignals.join(", ")}.`,
+        `The component contains a ${signal.label}.`,
       recommendation:
-        "Keep the UI component focused on rendering. Move server-state logic into hooks, API logic into services, reusable types into type files, and static data into data modules.",
+        "Keep the UI component focused on rendering and interaction. Move server-state logic into a custom hook, API calls into services, and mock/static datasets into data modules.",
       file,
-      line: firstMatch.line,
-      column: firstMatch.column,
-      codeSnippet: firstMatch.codeSnippet,
-      evidence: uniqueSignals.map(
-        (signal) => `Detected signal: ${signal}`,
-      ),
-      confidence: "medium",
+      line,
+      column: 1,
+      codeSnippet: getCodeLine(source, line),
+      evidence: [
+        `Signal: ${signal.id}`,
+        `Matched code: ${signal.matchedText.trim()}`,
+      ],
+      confidence: signal.confidence,
     }),
   );
 }

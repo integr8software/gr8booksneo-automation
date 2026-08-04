@@ -36,6 +36,23 @@ function isGeneratedFile(file, config) {
     return pattern && normalized.includes(pattern);
   });
 }
+function isMockOrDataFile(file) {
+  const normalized = `/${normalizePath(file).toLowerCase()}`;
+
+  return (
+    normalized.includes("/mock") ||
+    normalized.includes("/mocks/") ||
+    normalized.includes("/fixtures/") ||
+    normalized.includes("/fixture") ||
+    normalized.includes("/dummy") ||
+    normalized.includes("/sample") ||
+    normalized.includes("/data/") ||
+    /(?:mock|fixture|dummy|sample)data\.(ts|tsx|js|jsx)$/i.test(
+      normalized,
+    )
+  );
+}
+
 function isValidationFile(file) {
   const normalized = normalizePath(file).toLowerCase();
   const fileName = path.basename(normalized);
@@ -130,7 +147,7 @@ function appearsToBeApiDto(name) {
   return /(Request|Response|Dto|DTO|Payload|ApiResult|ApiModel)$/i.test(name);
 }
 function appearsFrontendSpecific(name) {
-  return /(Props|FormValues|FormErrors|FormData|ViewModel|TableRow|RowData|ColumnDef|Column|Filter|Dialog|Modal|Drawer|UiState|UIState|LocalState|Option|Item|CardItem|TabItem|DisplayModel|ContextValue|Ref)$/i.test(name);
+  return /(Props|FormValues|FormErrors|FormData|ViewModel|TableRow|RowData|ColumnDef|Column|Filter|Dialog|Modal|Drawer|UiState|UIState|LocalState|Option|Item|CardItem|TabItem|DisplayModel|ContextValue|Ref|Icon|LucideIcon|LayoutKind)$/i.test(name);
 }
 function isTemporaryTypeName(name) {
   return /^(Temporary|Temp|Legacy|Fallback)/i.test(name);
@@ -187,13 +204,26 @@ function detectManualApiDto({ file, source, config, findings }) {
 }
 function detectTypeOutsideExpectedLocation({ file, source, config, findings }) {
   const rule = config.types?.rules?.typeOutsideExpectedLocation;
-  if (!rule?.enabled || isInsideTypesDirectory(file, config) || isValidationFile(file)) return;
+  if (
+    !rule?.enabled ||
+    isInsideTypesDirectory(file, config) ||
+    isValidationFile(file) ||
+    isMockOrDataFile(file)
+  ) return;
   for (const declared of findDeclaredTypes(source)) {
     const references = countIdentifierReferences(source, declared.name);
-    const localFrontendType = appearsFrontendSpecific(declared.name) ||
-      ((isUiFile(file, config) || isHooksFile(file)) && !declared.exported);
+    const localFrontendType =
+      appearsFrontendSpecific(declared.name) ||
+      ((isUiFile(file, config) || isHooksFile(file)) &&
+        !declared.exported);
+
     if (localFrontendType) continue;
-    if (!declared.exported && references <= 3) continue;
+
+    /*
+     * Non-exported declarations are local implementation details. Reference
+     * count inside one file is not evidence that they are shared types.
+     */
+    if (!declared.exported) continue;
     const line = getLineNumber(source, declared.index);
     findings.push(createFinding({
       ruleId: "types.typeOutsideExpectedLocation", severity: rule.severity,

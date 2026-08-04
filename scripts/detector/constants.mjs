@@ -11,7 +11,8 @@ const COMMON_UI_LITERALS = new Set([
   "active", "inactive", "completed", "cancelled", "canceled", "pending",
   "list", "map", "edit", "view", "save", "cancel", "close", "button",
   "submit", "reset", "code", "name", "description", "branch", "cold",
-  "ambient", "bulk", "hazmat", "true", "false", "null", "undefined",
+  "ambient", "bulk", "hazmat", "general", "open", "progress", "readiness",
+  "true", "false", "null", "undefined",
 ]);
 
 function normalizePath(value) {
@@ -134,15 +135,30 @@ function isTypeUnionLiteral(literal) {
 function isObjectKeyLiteral(literal) {
   return /^\s*["'`][^"'`]+["'`]\s*:/.test(literal.codeLine);
 }
+function isPresentationOrFallbackLiteral(literal) {
+  const line = literal.codeLine;
+
+  return (
+    /\b(?:label|title|text|placeholder|caption|displayName)\s*[:=]/i.test(line) ||
+    /\|\|\s*["'`]/.test(line) ||
+    /\?\s*["'`][^"'`]+["'`]\s*:\s*["'`]/.test(line)
+  );
+}
+
 function isUsefulRepeatedLiteral(literal, config) {
   const value = literal.value.trim();
   const minimum = Number(config.constants?.minimumStringLength) || 3;
+
   return value.length >= minimum &&
     !(config.constants?.ignoredLiterals ?? []).includes(value) &&
     !COMMON_UI_LITERALS.has(value.toLowerCase()) &&
-    !isTailwindOrCssLiteral(value) && !isHtmlOrJsxAttributeLiteral(literal) &&
-    !isTypeUnionLiteral(literal) && !isObjectKeyLiteral(literal) &&
-    !/^\d+$/.test(value) && !/^\s+$/.test(value);
+    !isTailwindOrCssLiteral(value) &&
+    !isHtmlOrJsxAttributeLiteral(literal) &&
+    !isTypeUnionLiteral(literal) &&
+    !isObjectKeyLiteral(literal) &&
+    !isPresentationOrFallbackLiteral(literal) &&
+    !/^\d+$/.test(value) &&
+    !/^\s+$/.test(value);
 }
 function looksLikeBusinessIdentifier(value) {
   const text = value.trim();
@@ -177,9 +193,20 @@ function checkRepeatedLiterals({ file, source, literals, config, findings }) {
 }
 function statusContextIsMeaningful(literal) {
   const line = literal.codeLine;
-  if (isHtmlOrJsxAttributeLiteral(literal) || isTypeUnionLiteral(literal) ||
-    /\b(?:label|title|text|placeholder|caption|displayName)\s*[:=]/i.test(line)) return false;
-  return /\b(?:status|statuses|state|approvalStatus|processingStatus)\b/i.test(line);
+
+  if (
+    isHtmlOrJsxAttributeLiteral(literal) ||
+    isTypeUnionLiteral(literal) ||
+    isPresentationOrFallbackLiteral(literal) ||
+    /\bconfig\.statuses\b/i.test(line)
+  ) {
+    return false;
+  }
+
+  return (
+    /\b(?:status|approvalStatus|processingStatus)\s*[:=]/i.test(line) ||
+    /\b(?:status|approvalStatus|processingStatus)\s*(?:===|!==|==|!=)/i.test(line)
+  );
 }
 function checkHardcodedStatuses({ file, source, literals, config, findings }) {
   const rule = config.constants?.rules?.hardcodedStatus;

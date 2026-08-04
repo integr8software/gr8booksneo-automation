@@ -151,12 +151,10 @@
     "maxBlockingLines": 1000,
     "referenceModule": "app/src/ui/modules/system-administration/approval-management",
     "mixedResponsibilitySignals": [
-      "axios",
+      "axios.",
       "fetch(",
-      "useQuery",
-      "useMutation",
-      "interface ",
-      "type ",
+      "useQuery(",
+      "useMutation(",
       "mockData",
       "dummyData"
     ],
