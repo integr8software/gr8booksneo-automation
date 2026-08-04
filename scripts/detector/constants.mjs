@@ -2,775 +2,295 @@ import fs from "node:fs";
 import path from "node:path";
 
 const DEFAULT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"];
-
-const DEFAULT_STATUS_VALUES = new Set([
-  "ACTIVE",
-  "INACTIVE",
-  "PENDING",
-  "APPROVED",
-  "REJECTED",
-  "CANCELLED",
-  "CANCELED",
-  "DRAFT",
-  "COMPLETED",
-  "FAILED",
-  "SUCCESS",
-  "ENABLED",
-  "DISABLED",
-  "ARCHIVED",
-  "DELETED",
-  "PROCESSING",
-  "PAID",
-  "UNPAID",
-  "EXPIRED",
+const STATUS_VALUES = new Set([
+  "ACTIVE", "INACTIVE", "PENDING", "APPROVED", "REJECTED", "CANCELLED",
+  "CANCELED", "DRAFT", "COMPLETED", "FAILED", "SUCCESS", "ENABLED",
+  "DISABLED", "ARCHIVED", "DELETED", "PROCESSING", "PAID", "UNPAID", "EXPIRED",
+]);
+const COMMON_UI_LITERALS = new Set([
+  "active", "inactive", "completed", "cancelled", "canceled", "pending",
+  "list", "map", "edit", "view", "save", "cancel", "close", "button",
+  "submit", "reset", "code", "name", "description", "branch", "cold",
+  "ambient", "bulk", "hazmat", "true", "false", "null", "undefined",
 ]);
 
 function normalizePath(value) {
   return String(value ?? "").replaceAll("\\", "/");
 }
-
 function normalizeDirectory(value) {
-  return normalizePath(value)
-    .replace(/^\/+|\/+$/g, "")
-    .toLowerCase();
+  return normalizePath(value).replace(/^\/+|\/+$/g, "").toLowerCase();
 }
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function getLineNumber(source, index) {
   return source.slice(0, index).split(/\r?\n/).length;
 }
-
 function getCodeLine(source, lineNumber) {
   return source.split(/\r?\n/)[lineNumber - 1]?.trim() ?? "";
 }
-
-function createFinding({
-  ruleId,
-  severity,
-  title,
-  message,
-  recommendation,
-  file,
-  line = null,
-  column = null,
-  codeSnippet = "",
-  relatedFiles = [],
-  evidence = [],
-  confidence = "high",
-}) {
+function createFinding({ ruleId, severity, title, message, recommendation, file,
+  line = null, column = null, codeSnippet = "", relatedFiles = [], evidence = [],
+  confidence = "high" }) {
   return {
-    category: "constants",
-    ruleId,
-    severity,
-    title,
-    message,
-    recommendation,
-    file: normalizePath(file),
-    line,
-    column,
-    endLine: null,
-    endColumn: null,
-    codeSnippet,
-    relatedFiles: relatedFiles.map(normalizePath),
-    evidence,
-    detector: "constants",
-    confidence,
+    category: "constants", ruleId, severity, title, message, recommendation,
+    file: normalizePath(file), line, column, endLine: null, endColumn: null,
+    codeSnippet, relatedFiles: relatedFiles.map(normalizePath), evidence,
+    detector: "constants", confidence,
   };
 }
-
 function isIgnored(file, config) {
-  const normalizedFile = `/${normalizePath(file).toLowerCase()}/`;
-
-  return (config.ignoredPaths ?? []).some((ignoredPath) => {
-    const normalizedIgnored = normalizeDirectory(ignoredPath);
-
-    if (!normalizedIgnored) {
-      return false;
-    }
-
-    return normalizedFile.includes(`/${normalizedIgnored}/`);
+  const normalized = `/${normalizePath(file).toLowerCase()}/`;
+  return (config.ignoredPaths ?? []).some((item) => {
+    const ignored = normalizeDirectory(item);
+    return ignored && normalized.includes(`/${ignored}/`);
   });
 }
-
 function isGeneratedFile(file, config) {
-  const normalizedFile = normalizePath(file).toLowerCase();
-
-  return (config.generatedCodePatterns ?? []).some((pattern) => {
-    const normalizedPattern = normalizePath(pattern).toLowerCase();
-
-    return (
-      normalizedPattern.length > 0 &&
-      normalizedFile.includes(normalizedPattern)
-    );
+  const normalized = normalizePath(file).toLowerCase();
+  return (config.generatedCodePatterns ?? []).some((item) => {
+    const pattern = normalizePath(item).toLowerCase();
+    return pattern && normalized.includes(pattern);
   });
 }
-
 function isSupportedFile(file, config) {
-  const extension = path.extname(file).toLowerCase();
-
-  const supportedExtensions =
-    config.supportedExtensions ?? DEFAULT_EXTENSIONS;
-
-  return supportedExtensions
-    .map((item) => item.toLowerCase())
-    .includes(extension);
+  const supported = config.supportedExtensions ?? DEFAULT_EXTENSIONS;
+  return supported.map((item) => item.toLowerCase())
+    .includes(path.extname(file).toLowerCase());
 }
-
 function isInsideDirectory(file, directory) {
   const normalizedFile = normalizePath(file).toLowerCase();
   const normalizedDirectory = normalizeDirectory(directory);
-
-  if (!normalizedDirectory) {
-    return false;
-  }
-
-  return (
-    normalizedFile === normalizedDirectory ||
-    normalizedFile.startsWith(`${normalizedDirectory}/`)
-  );
+  return normalizedDirectory &&
+    (normalizedFile === normalizedDirectory || normalizedFile.startsWith(`${normalizedDirectory}/`));
 }
-
 function isInsideConstantsDirectory(file, config) {
-  const rootDirectories =
-    config.constants?.rootDirectories ?? ["app/src/constants"];
-
-  return rootDirectories.some((directory) =>
-    isInsideDirectory(file, directory),
-  );
+  return (config.constants?.rootDirectories ?? ["app/src/constants"])
+    .some((root) => isInsideDirectory(file, root));
 }
-
-/**
- * Replaces comments with spaces while preserving newlines and string contents.
- * This prevents commented-out literals from becoming findings.
- */
+function isMockOrDataFile(file) {
+  const normalized = `/${normalizePath(file).toLowerCase()}`;
+  return normalized.includes("/mock") || normalized.includes("/mocks/") ||
+    normalized.includes("/fixtures/") || normalized.includes("/fixture") ||
+    normalized.includes("/dummy") || normalized.includes("/sample") ||
+    normalized.includes("/data/") ||
+    /(?:mock|fixture|dummy|sample)data\.(ts|tsx|js|jsx)$/i.test(normalized);
+}
 function removeComments(source) {
   let output = "";
   let index = 0;
   let state = "code";
-
   while (index < source.length) {
     const current = source[index];
     const next = source[index + 1];
-
     if (state === "code") {
-      if (current === "'" || current === '"' || current === "`") {
-        state =
-          current === "'"
-            ? "single"
-            : current === '"'
-              ? "double"
-              : "template";
-
-        output += current;
-        index += 1;
-        continue;
-      }
-
       if (current === "/" && next === "/") {
-        state = "line-comment";
-        output += "  ";
-        index += 2;
-        continue;
+        output += "  "; index += 2; state = "line"; continue;
       }
-
       if (current === "/" && next === "*") {
-        state = "block-comment";
-        output += "  ";
-        index += 2;
-        continue;
+        output += "  "; index += 2; state = "block"; continue;
       }
-
-      output += current;
-      index += 1;
-      continue;
+      output += current; index += 1; continue;
     }
-
-    if (state === "line-comment") {
-      if (current === "\n") {
-        state = "code";
-        output += "\n";
-      } else {
-        output += " ";
-      }
-
-      index += 1;
-      continue;
+    if (state === "line") {
+      if (current === "\n") { output += "\n"; state = "code"; }
+      else output += " ";
+      index += 1; continue;
     }
-
-    if (state === "block-comment") {
-      if (current === "*" && next === "/") {
-        state = "code";
-        output += "  ";
-        index += 2;
-        continue;
-      }
-
-      output += current === "\n" ? "\n" : " ";
-      index += 1;
-      continue;
+    if (current === "*" && next === "/") {
+      output += "  "; index += 2; state = "code"; continue;
     }
-
-    if (state === "single") {
-      output += current;
-
-      if (current === "\\" && next !== undefined) {
-        output += next;
-        index += 2;
-        continue;
-      }
-
-      if (current === "'") {
-        state = "code";
-      }
-
-      index += 1;
-      continue;
-    }
-
-    if (state === "double") {
-      output += current;
-
-      if (current === "\\" && next !== undefined) {
-        output += next;
-        index += 2;
-        continue;
-      }
-
-      if (current === '"') {
-        state = "code";
-      }
-
-      index += 1;
-      continue;
-    }
-
-    if (state === "template") {
-      output += current;
-
-      if (current === "\\" && next !== undefined) {
-        output += next;
-        index += 2;
-        continue;
-      }
-
-      if (current === "`") {
-        state = "code";
-      }
-
-      index += 1;
-    }
+    output += current === "\n" ? "\n" : " ";
+    index += 1;
   }
-
   return output;
 }
-
-function decodeSimpleString(rawValue) {
-  return rawValue
-    .replaceAll("\\n", "\n")
-    .replaceAll("\\r", "\r")
-    .replaceAll("\\t", "\t")
-    .replaceAll('\\"', '"')
-    .replaceAll("\\'", "'")
-    .replaceAll("\\\\", "\\");
-}
-
 function extractStringLiterals(source) {
+  const cleaned = removeComments(source);
   const literals = [];
-  const cleanedSource = removeComments(source);
-
-  const pattern =
-    /(["'])(?:(?=(\\?))\2.)*?\1|`(?:\\.|[^`])*`/gs;
-
-  for (const match of cleanedSource.matchAll(pattern)) {
+  const pattern = /(["'])(?:(?=(\\?))\2.)*?\1|`(?:\\.|[^`])*`/gs;
+  for (const match of cleaned.matchAll(pattern)) {
     const raw = match[0];
     const index = match.index ?? 0;
-    const quote = raw[0];
-
-    let value = raw.slice(1, -1);
-
-    if (quote === "`" && value.includes("${")) {
-      continue;
-    }
-
-    value = decodeSimpleString(value);
-
-    literals.push({
-      value,
-      raw,
-      index,
-      line: getLineNumber(cleanedSource, index),
-    });
+    if (raw[0] === "`" && raw.includes("${")) continue;
+    const line = getLineNumber(cleaned, index);
+    literals.push({ value: raw.slice(1, -1), index, line, codeLine: getCodeLine(source, line) });
   }
-
   return literals;
 }
-
-function isIgnoredLiteral(value, config) {
-  const ignoredLiterals =
-    config.constants?.ignoredLiterals ?? [];
-
-  return ignoredLiterals.includes(value);
+function isTailwindOrCssLiteral(value) {
+  const text = value.trim();
+  if (!text) return false;
+  return /\b(?:sm|md|lg|xl|2xl):[A-Za-z0-9_[\]():./%-]+/.test(text) ||
+    /\b(?:min-w|max-w|w|h|p|px|py|m|mx|my|gap|grid|flex|text|bg|border|rounded|items|justify|space|col|row|shadow|hover|focus|dark)-/.test(text) ||
+    (text.includes(" ") && /^[A-Za-z0-9_:[\]()./%#-]+(?:\s+[A-Za-z0-9_:[\]()./%#-]+)+$/.test(text));
 }
-
-function isUsefulLiteral(value, config) {
-  const minimumStringLength =
-    Number(config.constants?.minimumStringLength) || 3;
-
-  if (value.length < minimumStringLength) {
-    return false;
-  }
-
-  if (isIgnoredLiteral(value, config)) {
-    return false;
-  }
-
-  if (/^\s+$/.test(value)) {
-    return false;
-  }
-
-  if (/^[0-9]+$/.test(value)) {
-    return false;
-  }
-
-  return true;
+function isHtmlOrJsxAttributeLiteral(literal) {
+  return /\b(?:type|variant|mode|size|role|method|target|rel|aria-[\w-]+|data-[\w-]+|className)\s*=\s*["'`]/i
+    .test(literal.codeLine);
 }
-
-function checkRepeatedLiterals({
-  file,
-  source,
-  literals,
-  config,
-  findings,
-}) {
+function isTypeUnionLiteral(literal) {
+  const line = literal.codeLine;
+  return /^\s*(?:export\s+)?type\s+\w+\s*=/.test(line) ||
+    /["'`][^"'`]+["'`]\s*\|\s*["'`]/.test(line);
+}
+function isObjectKeyLiteral(literal) {
+  return /^\s*["'`][^"'`]+["'`]\s*:/.test(literal.codeLine);
+}
+function isUsefulRepeatedLiteral(literal, config) {
+  const value = literal.value.trim();
+  const minimum = Number(config.constants?.minimumStringLength) || 3;
+  return value.length >= minimum &&
+    !(config.constants?.ignoredLiterals ?? []).includes(value) &&
+    !COMMON_UI_LITERALS.has(value.toLowerCase()) &&
+    !isTailwindOrCssLiteral(value) && !isHtmlOrJsxAttributeLiteral(literal) &&
+    !isTypeUnionLiteral(literal) && !isObjectKeyLiteral(literal) &&
+    !/^\d+$/.test(value) && !/^\s+$/.test(value);
+}
+function looksLikeBusinessIdentifier(value) {
+  const text = value.trim();
+  return /^[A-Z][A-Z0-9_]{2,}$/.test(text) ||
+    /^(?:permission|role|feature|storage|query|route|api)[.:/_-][A-Za-z0-9.:/_-]+$/i.test(text) ||
+    /^[a-z][a-z0-9]+(?:[._:-][a-z0-9]+){2,}$/i.test(text);
+}
+function checkRepeatedLiterals({ file, source, literals, config, findings }) {
   const rule = config.constants?.rules?.repeatedLiteral;
-
-  if (
-    !rule?.enabled ||
-    config.constants?.detectRepeatedLiterals === false
-  ) {
-    return;
-  }
-
-  const threshold =
-    Number(config.constants?.minimumOccurrences) || 3;
-
+  if (!rule?.enabled || config.constants?.detectRepeatedLiterals === false || isMockOrDataFile(file)) return;
+  const threshold = Math.max(Number(config.constants?.minimumOccurrences) || 3, 3);
   const grouped = new Map();
-
   for (const literal of literals) {
-    if (!isUsefulLiteral(literal.value, config)) {
-      continue;
-    }
-
-    const existing = grouped.get(literal.value) ?? [];
-    existing.push(literal);
-    grouped.set(literal.value, existing);
+    if (!isUsefulRepeatedLiteral(literal, config)) continue;
+    const list = grouped.get(literal.value) ?? [];
+    list.push(literal); grouped.set(literal.value, list);
   }
-
   for (const [value, occurrences] of grouped.entries()) {
-    if (occurrences.length < threshold) {
-      continue;
-    }
-
+    if (occurrences.length < threshold) continue;
+    if (!looksLikeBusinessIdentifier(value) && occurrences.length < 5) continue;
     const first = occurrences[0];
-
-    findings.push(
-      createFinding({
-        ruleId: "constants.repeatedLiteral",
-        severity: rule.severity,
-        title: "Repeated literal may need a shared constant",
-        message:
-          `The literal "${value}" appears ${occurrences.length} times in this changed file.`,
-        recommendation:
-          "Extract the repeated value into a named constant when it represents shared business or UI meaning.",
-        file,
-        line: first.line,
-        column: 1,
-        codeSnippet: getCodeLine(source, first.line),
-        evidence: occurrences
-          .slice(0, 10)
-          .map((occurrence) => `Occurrence at line ${occurrence.line}`),
-        confidence: "medium",
-      }),
-    );
+    findings.push(createFinding({
+      ruleId: "constants.repeatedLiteral", severity: rule.severity,
+      title: "Repeated business literal may need a shared constant",
+      message: `The literal "${value}" appears ${occurrences.length} times in this changed file.`,
+      recommendation: "Extract it only when it represents stable shared business meaning; ordinary labels and presentation text can remain inline.",
+      file, line: first.line, column: 1, codeSnippet: getCodeLine(source, first.line),
+      evidence: occurrences.slice(0, 10).map((item) => `Occurrence at line ${item.line}`),
+      confidence: looksLikeBusinessIdentifier(value) ? "high" : "medium",
+    }));
   }
 }
-
-function isStatusValue(value) {
-  const normalized = value.trim().toUpperCase();
-
-  if (DEFAULT_STATUS_VALUES.has(normalized)) {
-    return true;
-  }
-
-  return /^(ACTIVE|INACTIVE|PENDING|APPROVED|REJECTED|DRAFT|FAILED|SUCCESS|COMPLETED|CANCELLED|CANCELED|ARCHIVED|DELETED|ENABLED|DISABLED)$/.test(
-    normalized,
-  );
+function statusContextIsMeaningful(literal) {
+  const line = literal.codeLine;
+  if (isHtmlOrJsxAttributeLiteral(literal) || isTypeUnionLiteral(literal) ||
+    /\b(?:label|title|text|placeholder|caption|displayName)\s*[:=]/i.test(line)) return false;
+  return /\b(?:status|statuses|state|approvalStatus|processingStatus)\b/i.test(line);
 }
-
-function checkHardcodedStatuses({
-  file,
-  source,
-  literals,
-  config,
-  findings,
-}) {
+function checkHardcodedStatuses({ file, source, literals, config, findings }) {
   const rule = config.constants?.rules?.hardcodedStatus;
-
-  if (!rule?.enabled) {
-    return;
-  }
-
-  const alreadyReported = new Set();
-
+  if (!rule?.enabled || isMockOrDataFile(file)) return;
+  const grouped = new Map();
   for (const literal of literals) {
-    if (!isStatusValue(literal.value)) {
-      continue;
-    }
-
-    const normalizedValue = literal.value.toUpperCase();
-
-    if (alreadyReported.has(normalizedValue)) {
-      continue;
-    }
-
-    alreadyReported.add(normalizedValue);
-
-    findings.push(
-      createFinding({
-        ruleId: "constants.hardcodedStatus",
-        severity: rule.severity,
-        title: "Hardcoded status value detected",
-        message:
-          `The status value "${literal.value}" is written directly in production code.`,
-        recommendation:
-          "Use a centralized status constant, enum, or generated API type instead of repeating raw status strings.",
-        file,
-        line: literal.line,
-        column: 1,
-        codeSnippet: getCodeLine(source, literal.line),
-        evidence: [`Detected status: ${literal.value}`],
-        confidence: "medium",
-      }),
-    );
+    const normalized = literal.value.trim().toUpperCase();
+    if (!STATUS_VALUES.has(normalized) || !statusContextIsMeaningful(literal)) continue;
+    const list = grouped.get(normalized) ?? [];
+    list.push(literal); grouped.set(normalized, list);
+  }
+  for (const occurrences of grouped.values()) {
+    if (occurrences.length < 2) continue;
+    const first = occurrences[0];
+    findings.push(createFinding({
+      ruleId: "constants.hardcodedStatus", severity: rule.severity,
+      title: "Repeated hardcoded status value detected",
+      message: `The status value "${first.value}" appears ${occurrences.length} times in status-related logic.`,
+      recommendation: "Use an existing status constant, enum, or generated API type when the same status is reused across logic.",
+      file, line: first.line, column: 1, codeSnippet: getCodeLine(source, first.line),
+      evidence: occurrences.slice(0, 10).map((item) => `Occurrence at line ${item.line}`),
+      confidence: "high",
+    }));
   }
 }
-
 function looksLikePermission(value) {
-  const trimmed = value.trim();
-
-  if (
-    /^(can|has|allow|manage|view|create|read|update|delete|edit|approve|reject)[.:_-][A-Za-z0-9._:-]+$/i.test(
-      trimmed,
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    /^[A-Za-z][A-Za-z0-9_-]*\.(create|read|view|update|delete|edit|manage|approve|reject)$/i.test(
-      trimmed,
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    /^(permission|permissions|role|roles)[.:_-][A-Za-z0-9._:-]+$/i.test(
-      trimmed,
-    )
-  ) {
-    return true;
-  }
-
-  return false;
+  const text = value.trim();
+  return /^(?:can|has|allow|manage|view|create|read|update|delete|edit|approve|reject)[.:_-][A-Za-z0-9._:-]+$/i.test(text) ||
+    /^[A-Za-z][A-Za-z0-9_-]*\.(?:create|read|view|update|delete|edit|manage|approve|reject)$/i.test(text) ||
+    /^(?:permission|permissions|role|roles)[.:_-][A-Za-z0-9._:-]+$/i.test(text);
 }
-
-function checkHardcodedPermissions({
-  file,
-  source,
-  literals,
-  config,
-  findings,
-}) {
-  const rule =
-    config.constants?.rules?.hardcodedPermission;
-
-  if (!rule?.enabled) {
-    return;
-  }
-
-  const alreadyReported = new Set();
-
+function checkHardcodedPermissions({ file, source, literals, config, findings }) {
+  const rule = config.constants?.rules?.hardcodedPermission;
+  if (!rule?.enabled || isMockOrDataFile(file)) return;
+  const seen = new Set();
   for (const literal of literals) {
-    if (!looksLikePermission(literal.value)) {
-      continue;
-    }
-
-    const normalizedValue = literal.value.toLowerCase();
-
-    if (alreadyReported.has(normalizedValue)) {
-      continue;
-    }
-
-    alreadyReported.add(normalizedValue);
-
-    findings.push(
-      createFinding({
-        ruleId: "constants.hardcodedPermission",
-        severity: rule.severity,
-        title: "Hardcoded permission value detected",
-        message:
-          `The permission value "${literal.value}" is written directly in the changed file.`,
-        recommendation:
-          "Reference a centralized permission constant to avoid inconsistent permission names.",
-        file,
-        line: literal.line,
-        column: 1,
-        codeSnippet: getCodeLine(source, literal.line),
-        evidence: [`Detected permission: ${literal.value}`],
-        confidence: "medium",
-      }),
-    );
+    if (!looksLikePermission(literal.value)) continue;
+    const key = literal.value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    findings.push(createFinding({
+      ruleId: "constants.hardcodedPermission", severity: rule.severity,
+      title: "Hardcoded permission identifier detected",
+      message: `The permission identifier "${literal.value}" is written directly in the changed file.`,
+      recommendation: "Reference the centralized permission definition to prevent inconsistent authorization checks.",
+      file, line: literal.line, column: 1, codeSnippet: getCodeLine(source, literal.line),
+      evidence: [`Permission identifier: ${literal.value}`], confidence: "high",
+    }));
   }
 }
-
-function findQueryKeyLiterals(source) {
-  const results = [];
-
+function checkHardcodedQueryKeys({ file, source, config, findings }) {
+  const rule = config.constants?.rules?.hardcodedQueryKey;
+  if (!rule?.enabled || isMockOrDataFile(file)) return;
   const patterns = [
-    /\bqueryKey\s*:\s*\[\s*(['"`])([^'"`]+)\1/g,
-    /\binvalidateQueries\s*\(\s*\{\s*queryKey\s*:\s*\[\s*(['"`])([^'"`]+)\1/g,
-    /\bsetQueryData\s*\(\s*\[\s*(['"`])([^'"`]+)\1/g,
-    /\bgetQueryData\s*\(\s*\[\s*(['"`])([^'"`]+)\1/g,
+    /\bqueryKey\s*:\s*\[\s*(["'`])([^"'`]+)\1/g,
+    /\binvalidateQueries\s*\(\s*\{\s*queryKey\s*:\s*\[\s*(["'`])([^"'`]+)\1/g,
+    /\b(?:setQueryData|getQueryData)\s*\(\s*\[\s*(["'`])([^"'`]+)\1/g,
   ];
-
+  const seen = new Set();
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
-      const index = match.index ?? 0;
-
-      results.push({
-        value: match[2],
-        index,
-        line: getLineNumber(source, index),
-      });
-    }
-  }
-
-  return results.sort((left, right) => left.index - right.index);
-}
-
-function checkHardcodedQueryKeys({
-  file,
-  source,
-  config,
-  findings,
-}) {
-  const rule =
-    config.constants?.rules?.hardcodedQueryKey;
-
-  if (!rule?.enabled) {
-    return;
-  }
-
-  const matches = findQueryKeyLiterals(source);
-  const alreadyReported = new Set();
-
-  for (const match of matches) {
-    const normalizedValue = match.value.toLowerCase();
-
-    if (alreadyReported.has(normalizedValue)) {
-      continue;
-    }
-
-    alreadyReported.add(normalizedValue);
-
-    findings.push(
-      createFinding({
-        ruleId: "constants.hardcodedQueryKey",
-        severity: rule.severity,
+      if (seen.has(match[2])) continue;
+      seen.add(match[2]);
+      const line = getLineNumber(source, match.index ?? 0);
+      findings.push(createFinding({
+        ruleId: "constants.hardcodedQueryKey", severity: rule.severity,
         title: "Hardcoded TanStack Query key detected",
-        message:
-          `The query key "${match.value}" is declared directly in the changed file.`,
-        recommendation:
-          "Move reusable query keys into a centralized query-key constant or query-key factory.",
-        file,
-        line: match.line,
-        column: 1,
-        codeSnippet: getCodeLine(source, match.line),
-        evidence: [`Detected query key: ${match.value}`],
-        confidence: "high",
-      }),
-    );
+        message: `The query key "${match[2]}" is declared directly in the changed file.`,
+        recommendation: "Use a centralized query-key constant or query-key factory.",
+        file, line, column: 1, codeSnippet: getCodeLine(source, line),
+        evidence: [`Query key: ${match[2]}`], confidence: "high",
+      }));
+    }
   }
 }
-
-function findStorageKeyLiterals(source) {
-  const results = [];
-
-  const pattern =
-    /\b(?:localStorage|sessionStorage)\s*\.\s*(?:getItem|setItem|removeItem)\s*\(\s*(['"`])([^'"`]+)\1/g;
-
+function checkHardcodedStorageKeys({ file, source, config, findings }) {
+  const rule = config.constants?.rules?.hardcodedStorageKey;
+  if (!rule?.enabled || isMockOrDataFile(file)) return;
+  const pattern = /\b(?:localStorage|sessionStorage)\s*\.\s*(getItem|setItem|removeItem)\s*\(\s*(["'`])([^"'`]+)\2/g;
+  const seen = new Set();
   for (const match of source.matchAll(pattern)) {
-    const index = match.index ?? 0;
-
-    results.push({
-      value: match[2],
-      operation: match[0]
-        .match(/\.(getItem|setItem|removeItem)/)?.[1] ?? "storage",
-      index,
-      line: getLineNumber(source, index),
-    });
-  }
-
-  return results;
-}
-
-function checkHardcodedStorageKeys({
-  file,
-  source,
-  config,
-  findings,
-}) {
-  const rule =
-    config.constants?.rules?.hardcodedStorageKey;
-
-  if (!rule?.enabled) {
-    return;
-  }
-
-  const matches = findStorageKeyLiterals(source);
-  const alreadyReported = new Set();
-
-  for (const match of matches) {
-    const normalizedValue = match.value.toLowerCase();
-
-    if (alreadyReported.has(normalizedValue)) {
-      continue;
-    }
-
-    alreadyReported.add(normalizedValue);
-
-    findings.push(
-      createFinding({
-        ruleId: "constants.hardcodedStorageKey",
-        severity: rule.severity,
-        title: "Hardcoded browser storage key detected",
-        message:
-          `The storage key "${match.value}" is passed directly to ${match.operation}().`,
-        recommendation:
-          "Use a centralized storage-key constant to prevent inconsistent browser storage access.",
-        file,
-        line: match.line,
-        column: 1,
-        codeSnippet: getCodeLine(source, match.line),
-        evidence: [
-          `Storage operation: ${match.operation}`,
-          `Storage key: ${match.value}`,
-        ],
-        confidence: "high",
-      }),
-    );
+    if (seen.has(match[3])) continue;
+    seen.add(match[3]);
+    const line = getLineNumber(source, match.index ?? 0);
+    findings.push(createFinding({
+      ruleId: "constants.hardcodedStorageKey", severity: rule.severity,
+      title: "Hardcoded browser storage key detected",
+      message: `The storage key "${match[3]}" is passed directly to ${match[1]}().`,
+      recommendation: "Use a centralized storage-key constant to prevent inconsistent browser storage access.",
+      file, line, column: 1, codeSnippet: getCodeLine(source, line),
+      evidence: [`Storage operation: ${match[1]}`, `Storage key: ${match[3]}`], confidence: "high",
+    }));
   }
 }
-
-/**
- * Runs constant consistency checks against files changed by the PR.
- *
- * The detector analyzes changed files only. It does not scan the entire
- * repository for repeated literals or duplicate constants.
- *
- * @param {object} options
- * @param {string} options.repositoryRoot
- * @param {string[]} options.files
- * @param {object} options.config
- * @returns {Promise<object[]>}
- */
-export async function detectConstants({
-  repositoryRoot,
-  files,
-  config,
-}) {
+export async function detectConstants({ repositoryRoot, files, config }) {
   const findings = [];
-
-  if (!config.constants?.enabled) {
-    return findings;
-  }
-
+  if (!config.constants?.enabled) return findings;
   for (const relativeFile of files) {
-    const normalizedFile = normalizePath(relativeFile);
-
-    if (!isSupportedFile(normalizedFile, config)) {
-      continue;
-    }
-
-    if (isIgnored(normalizedFile, config)) {
-      continue;
-    }
-
-    if (isGeneratedFile(normalizedFile, config)) {
-      continue;
-    }
-
-    // Raw literals inside centralized constant files are expected.
-    if (isInsideConstantsDirectory(normalizedFile, config)) {
-      continue;
-    }
-
-    const absoluteFile = path.resolve(
-      repositoryRoot,
-      ...normalizedFile.split("/"),
-    );
-
-    if (!fs.existsSync(absoluteFile)) {
-      continue;
-    }
-
+    const file = normalizePath(relativeFile);
+    if (!isSupportedFile(file, config) || isIgnored(file, config) ||
+      isGeneratedFile(file, config) || isInsideConstantsDirectory(file, config)) continue;
+    const absoluteFile = path.resolve(repositoryRoot, ...file.split("/"));
+    if (!fs.existsSync(absoluteFile)) continue;
     const source = fs.readFileSync(absoluteFile, "utf8");
     const literals = extractStringLiterals(source);
-
-    checkRepeatedLiterals({
-      file: normalizedFile,
-      source,
-      literals,
-      config,
-      findings,
-    });
-
-    checkHardcodedStatuses({
-      file: normalizedFile,
-      source,
-      literals,
-      config,
-      findings,
-    });
-
-    checkHardcodedPermissions({
-      file: normalizedFile,
-      source,
-      literals,
-      config,
-      findings,
-    });
-
-    checkHardcodedQueryKeys({
-      file: normalizedFile,
-      source,
-      config,
-      findings,
-    });
-
-    checkHardcodedStorageKeys({
-      file: normalizedFile,
-      source,
-      config,
-      findings,
-    });
+    checkRepeatedLiterals({ file, source, literals, config, findings });
+    checkHardcodedStatuses({ file, source, literals, config, findings });
+    checkHardcodedPermissions({ file, source, literals, config, findings });
+    checkHardcodedQueryKeys({ file, source, config, findings });
+    checkHardcodedStorageKeys({ file, source, config, findings });
   }
-
   return findings;
 }
-
 export default detectConstants;
