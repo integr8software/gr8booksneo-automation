@@ -136,6 +136,135 @@ function containsReactHookUsage(source) {
   return BUILT_IN_HOOK_PATTERN.test(source) || TANSTACK_HOOK_PATTERN.test(source);
 }
 
+
+function maskCommentsAndStrings(source) {
+  let output = "";
+  let index = 0;
+  let state = "code";
+
+  while (index < source.length) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (state === "code") {
+      if (current === "/" && next === "/") {
+        output += "  ";
+        index += 2;
+        state = "line-comment";
+        continue;
+      }
+
+      if (current === "/" && next === "*") {
+        output += "  ";
+        index += 2;
+        state = "block-comment";
+        continue;
+      }
+
+      if (current === "'" || current === '"' || current === "`") {
+        output += " ";
+        index += 1;
+        state = current === "'" ? "single-string" : current === '"' ? "double-string" : "template-string";
+        continue;
+      }
+
+      output += current;
+      index += 1;
+      continue;
+    }
+
+    if (state === "line-comment") {
+      if (current === "\\n") {
+        output += "\\n";
+        state = "code";
+      } else if (current === "\\r") {
+        output += "\\r";
+      } else {
+        output += " ";
+      }
+      index += 1;
+      continue;
+    }
+
+    if (state === "block-comment") {
+      if (current === "*" && next === "/") {
+        output += "  ";
+        index += 2;
+        state = "code";
+        continue;
+      }
+      output += current === "\\n" || current === "\\r" ? current : " ";
+      index += 1;
+      continue;
+    }
+
+    const closingCharacter = state === "single-string" ? "'" : state === "double-string" ? '"' : "`";
+
+    if (current === "\\\\") {
+      output += " ";
+      if (next !== undefined) {
+        output += next === "\\n" || next === "\\r" ? next : " ";
+        index += 2;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (current === closingCharacter) {
+      output += " ";
+      index += 1;
+      state = "code";
+      continue;
+    }
+
+    output += current === "\\n" || current === "\\r" ? current : " ";
+    index += 1;
+  }
+
+  return output;
+}
+
+function findMatchingBrace(maskedSource, openingBraceIndex) {
+  let depth = 0;
+
+  for (let index = openingBraceIndex; index < maskedSource.length; index += 1) {
+    const character = maskedSource[index];
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function extractFunctionBody(source, functionIndex) {
+  const maskedSource = maskCommentsAndStrings(source);
+  const openingBraceIndex = maskedSource.indexOf("{", functionIndex);
+
+  if (openingBraceIndex < 0) {
+    return "";
+  }
+
+  const closingBraceIndex = findMatchingBrace(maskedSource, openingBraceIndex);
+
+  if (closingBraceIndex < 0) {
+    return "";
+  }
+
+  return source.slice(openingBraceIndex + 1, closingBraceIndex);
+}
+
+
 function findExportedFunctionNames(source) {
   const results = [];
 
@@ -184,17 +313,19 @@ function detectInvalidHookName({
       continue;
     }
 
-    const remainingSource = source.slice(entry.index);
-    const nextFunctionIndex = remainingSource.slice(1).search(
-      /\b(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(|\b(?:export\s+)?const\s+[A-Za-z_$][\w$]*\s*=/,
+    const functionBody = extractFunctionBody(
+      source,
+      entry.index,
     );
 
-    const functionBody =
-      nextFunctionIndex >= 0
-        ? remainingSource.slice(0, nextFunctionIndex + 1)
-        : remainingSource;
+    if (!functionBody) {
+      continue;
+    }
 
-    if (!containsReactHookUsage(functionBody)) {
+    const maskedFunctionBody =
+      maskCommentsAndStrings(functionBody);
+
+    if (!containsReactHookUsage(maskedFunctionBody)) {
       continue;
     }
 
@@ -205,8 +336,9 @@ function detectInvalidHookName({
         ruleId: "hooks.invalidHookName",
         severity: rule.severity,
         title: "Custom hook name must start with use",
-        message: `"${entry.name}" calls React hooks but its name does not start with "use".`,
-        recommendation: `Rename "${entry.name}" so that it starts with "use".`,
+        message: `"${entry.name}" directly calls React hooks but its name does not start with "use".`,
+        recommendation:
+          `Move the hook call to the component top level or rename "${entry.name}" as a real custom hook beginning with "use".`,
         file,
         line,
         column: 1,
