@@ -1,0 +1,129 @@
+name: Frontend PR Quality
+
+on:
+  workflow_call:
+    inputs:
+      maximum-findings-per-rule:
+        description: Maximum findings retained for each rule.
+        required: false
+        type: number
+        default: 50
+
+      fail-on-blockers:
+        description: Fail when blocker findings exist.
+        required: false
+        type: boolean
+        default: true
+
+      fail-on-warnings:
+        description: Fail when warning findings exist.
+        required: false
+        type: boolean
+        default: false
+
+  workflow_dispatch:
+    inputs:
+      maximum-findings-per-rule:
+        description: Maximum findings retained for each rule.
+        required: false
+        type: number
+        default: 50
+
+      fail-on-blockers:
+        description: Fail when blocker findings exist.
+        required: false
+        type: boolean
+        default: true
+
+      fail-on-warnings:
+        description: Fail when warning findings exist.
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  frontend-pr-quality:
+    name: Frontend PR Quality
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout frontend repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout QA automation
+        uses: actions/checkout@v4
+        with:
+          repository: integr8software/gr8booksneo-automation
+          ref: develop
+          path: qa-automation
+          fetch-depth: 1
+          token: ${{ secrets.QA_AUTOMATION_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: qa-automation/package-lock.json
+
+      - name: Install QA dependencies
+        shell: powershell
+        working-directory: ${{ github.workspace }}\qa-automation
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          npm ci
+          npx playwright install chromium
+
+      - name: Resolve references
+        id: refs
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $baseReference = "${{ github.event.pull_request.base.sha }}"
+            $headReference = "${{ github.event.pull_request.head.sha }}"
+          }
+          else {
+            $baseReference = "origin/develop"
+            $headReference = "HEAD"
+          }
+
+          "base-reference=$baseReference" >> $env:GITHUB_OUTPUT
+          "head-reference=$headReference" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Base reference: $baseReference"
+          Write-Host "Head reference: $headReference"
+
+      - name: Run frontend quality analysis
+        id: frontend-quality
+        uses: ./qa-automation/.github/actions/frontend-analysis
+        with:
+          repository-root: ${{ github.workspace }}
+          automation-root: ${{ github.workspace }}\qa-automation
+          base-reference: ${{ steps.refs.outputs.base-reference }}
+          head-reference: ${{ steps.refs.outputs.head-reference }}
+          maximum-findings-per-rule: ${{ inputs.maximum-findings-per-rule }}
+          fail-on-blockers: ${{ inputs.fail-on-blockers }}
+          fail-on-warnings: ${{ inputs.fail-on-warnings }}
+
+
+      - name: Upload frontend QA reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-pr-quality-${{ github.run_number }}
+          path: |
+            ${{ steps.frontend-quality.outputs.report-json }}
+            ${{ steps.frontend-quality.outputs.report-markdown }}
+            ${{ steps.frontend-quality.outputs.report-html }}
+            ${{ steps.frontend-quality.outputs.report-png }}
+          if-no-files-found: error
+          retention-days: 14

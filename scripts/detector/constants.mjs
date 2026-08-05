@@ -182,9 +182,9 @@ function checkRepeatedLiterals({ file, source, literals, config, findings }) {
     const first = occurrences[0];
     findings.push(createFinding({
       ruleId: "constants.repeatedLiteral", severity: rule.severity,
-      title: "Repeated business literal may need a shared constant",
+      title: "Repeated business literal detected",
       message: `The literal "${value}" appears ${occurrences.length} times in this changed file.`,
-      recommendation: "Extract it only when it represents stable shared business meaning; ordinary labels and presentation text can remain inline.",
+      recommendation: "Extract the repeated value into a local constant when it is reused within this file. Use a shared constant only when the same value is reused across multiple modules.",
       file, line: first.line, column: 1, codeSnippet: getCodeLine(source, first.line),
       evidence: occurrences.slice(0, 10).map((item) => `Occurrence at line ${item.line}`),
       confidence: looksLikeBusinessIdentifier(value) ? "high" : "medium",
