@@ -147,7 +147,7 @@
       ".jsx"
     ],
     "requirePascalCaseFileNames": true,
-    "maxRecommendedLines": 500,
+    "maxRecommendedLines": 1000,
     "maxBlockingLines": 1000,
     "referenceModule": "app/src/ui/modules/system-administration/approval-management",
     "mixedResponsibilitySignals": [

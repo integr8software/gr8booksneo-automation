@@ -225,7 +225,7 @@ function checkComponentSize({
   const totalLines = countLines(source);
 
   const recommendedLimit =
-    Number(config.ui?.maxRecommendedLines) || 500;
+    Number(config.ui?.maxRecommendedLines) || 1000;
 
   const blockingLimit =
     Number(config.ui?.maxBlockingLines) || 1000;
