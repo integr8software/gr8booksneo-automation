@@ -12,6 +12,11 @@ const COMMON_UI_LITERALS = new Set([
   "list", "map", "edit", "view", "save", "cancel", "close", "button",
   "submit", "reset", "code", "name", "description", "branch", "cold",
   "ambient", "bulk", "hazmat", "general", "open", "progress", "readiness",
+  "text", "amount", "number", "currency", "date", "datetime",
+  "dropdown", "checkbox", "radio", "switch", "action",
+  "left", "right", "center", "justify",
+  "particulars", "remarks", "reference", "referenceno", "status",
+  "header", "footer", "page", "row", "column",
   "true", "false", "null", "undefined",
 ]);
 
@@ -141,7 +146,10 @@ function isPresentationOrFallbackLiteral(literal) {
   return (
     /\b(?:label|title|text|placeholder|caption|displayName)\s*[:=]/i.test(line) ||
     /\|\|\s*["'`]/.test(line) ||
-    /\?\s*["'`][^"'`]+["'`]\s*:\s*["'`]/.test(line)
+    /\?\s*["'`][^"'`]+["'`]\s*:\s*["'`]/.test(line) ||
+    /\b(?:kind|type|variant|align|alignment|field|column|accessorKey|dataIndex|key)\s*[:=]/i.test(line) ||
+    /\b(?:update|set|patch|change)[A-Za-z0-9_]*\s*\(/.test(line) ||
+    /\b(?:headerCell|reportTableCell|receivingReportColumn)\s*\(/i.test(line)
   );
 }
 
