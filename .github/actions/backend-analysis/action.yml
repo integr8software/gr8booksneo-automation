@@ -143,11 +143,11 @@ runs:
         Push-Location $env:REPOSITORY_ROOT
 
         try {
-          Write-Host "Installing backend repository dependencies..."
-          npm ci
+          Write-Host "Installing backend repository dependencies (without postinstall scripts)..."
+          npm ci --ignore-scripts
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Backend npm ci failed with exit code $LASTEXITCODE."
+            throw "Backend npm ci --ignore-scripts failed with exit code $LASTEXITCODE."
           }
 
           Write-Host "Running backend production build..."
