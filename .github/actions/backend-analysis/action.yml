@@ -131,27 +131,6 @@ runs:
           Pop-Location
         }
 
-    - name: Build backend repository
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        Push-Location "${{ inputs.repository-root }}"
-
-        try {
-          Write-Host "Running backend production build..."
-          npm run build
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Backend npm run build failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "Backend build passed."
-        }
-        finally {
-          Pop-Location
-        }
-
     - name: Setup Python for Semgrep
       uses: actions/setup-python@v5
       with:
@@ -448,6 +427,27 @@ runs:
           if ($LASTEXITCODE -ne 0) {
             throw "Dashboard screenshot generation failed with exit code $LASTEXITCODE."
           }
+        }
+        finally {
+          Pop-Location
+        }
+
+    - name: Build backend repository
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location "${{ inputs.repository-root }}"
+
+        try {
+          Write-Host "Running backend production build..."
+          npm run build
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend npm run build failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Backend build passed."
         }
         finally {
           Pop-Location
