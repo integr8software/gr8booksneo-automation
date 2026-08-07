@@ -187,19 +187,15 @@ runs:
           -Level "INFO" `
           -Message "Comparing $env:BASE_REFERENCE...$env:HEAD_REFERENCE"
 
-        $changedFiles = @(
-          Get-QaChangedFiles `
-            -RepositoryRoot $env:REPOSITORY_ROOT `
-            -BaseReference $env:BASE_REFERENCE `
-            -HeadReference $env:HEAD_REFERENCE
-        )
-
-        $changedFileCount = @($changedFiles).Count
+        $changedFiles = Get-QaChangedFiles `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -BaseReference $env:BASE_REFERENCE `
+          -HeadReference $env:HEAD_REFERENCE
 
         $changedFilesDocument = [ordered]@{
           baseReference = $env:BASE_REFERENCE
           headReference = $env:HEAD_REFERENCE
-          count = $changedFileCount
+          count = $changedFiles.Count
           files = @($changedFiles)
         }
 
@@ -208,11 +204,11 @@ runs:
           -Path $env:CHANGED_FILES_PATH |
           Out-Null
 
-        "count=$changedFileCount" >> $env:GITHUB_OUTPUT
+        "count=$($changedFiles.Count)" >> $env:GITHUB_OUTPUT
 
         Write-QaLog `
           -Level "SUCCESS" `
-          -Message "$changedFileCount changed file(s) detected."
+          -Message "$($changedFiles.Count) changed file(s) detected."
 
         foreach ($file in $changedFiles) {
           Write-Host " - $file"
@@ -444,6 +440,13 @@ runs:
         Push-Location "${{ inputs.repository-root }}"
 
         try {
+          Write-Host "Installing backend repository dependencies..."
+          npm ci
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend npm ci failed with exit code $LASTEXITCODE."
+          }
+
           Write-Host "Running backend production build..."
           npm run build
 
