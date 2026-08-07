@@ -205,6 +205,38 @@ runs:
           Pop-Location
         }
 
+    - name: Build frontend repository
+      id: build
+      continue-on-error: true
+      shell: powershell
+      env:
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository-root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location $env:REPOSITORY_ROOT
+
+        try {
+          Write-Host "Installing frontend repository dependencies..."
+          npm ci
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend npm ci failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Running frontend production build..."
+          npm run build
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend npm run build failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Frontend build passed."
+        }
+        finally {
+          Pop-Location
+        }
+
     - name: Verify frontend QA modules
       shell: powershell
       env:
@@ -474,9 +506,14 @@ runs:
       if: always()
       shell: powershell
       env:
+        BUILD_OUTCOME: ${{ steps.build.outcome }}
         ANALYSIS_EXIT_CODE: ${{ steps.analyze.outputs.analysis-exit-code }}
       run: |
         $ErrorActionPreference = "Stop"
+
+        if ($env:BUILD_OUTCOME -ne "success") {
+          throw "Frontend npm run build failed. Fix the build before merging this pull request."
+        }
 
         if ([string]::IsNullOrWhiteSpace($env:ANALYSIS_EXIT_CODE)) {
           throw "Frontend analyzer did not provide an exit code."

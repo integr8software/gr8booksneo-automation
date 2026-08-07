@@ -131,6 +131,38 @@ runs:
           Pop-Location
         }
 
+    - name: Build backend repository
+      id: build
+      continue-on-error: true
+      shell: pwsh
+      env:
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location $env:REPOSITORY_ROOT
+
+        try {
+          Write-Host "Installing backend repository dependencies..."
+          npm ci
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend npm ci failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Running backend production build..."
+          npm run build
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend npm run build failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Backend build passed."
+        }
+        finally {
+          Pop-Location
+        }
+
     - name: Setup Python for Semgrep
       uses: actions/setup-python@v5
       with:
@@ -436,8 +468,14 @@ runs:
       if: always()
       shell: pwsh
       env:
+        BUILD_OUTCOME: ${{ steps.build.outcome }}
         OVERALL_STATUS: ${{ steps.summary.outputs.overall_status }}
       run: |
+        if ($env:BUILD_OUTCOME -ne "success") {
+          Write-Error "Backend npm run build failed. Fix the build before merging this pull request."
+          exit 1
+        }
+
         $status = $env:OVERALL_STATUS
 
         if ([string]::IsNullOrWhiteSpace($status)) {
@@ -445,6 +483,7 @@ runs:
           exit 1
         }
 
+        Write-Host "Backend build: PASSED"
         Write-Host "Backend PR Quality status: $status"
 
         switch ($status) {
