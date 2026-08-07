@@ -205,34 +205,6 @@ runs:
           Pop-Location
         }
 
-    - name: Build frontend repository
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        Push-Location "${{ inputs.repository-root }}"
-
-        try {
-          Write-Host "Installing frontend repository dependencies..."
-          npm ci
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Frontend npm ci failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "Running frontend production build..."
-          npm run build
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Frontend npm run build failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "Frontend build passed."
-        }
-        finally {
-          Pop-Location
-        }
-
     - name: Verify frontend QA modules
       shell: powershell
       env:
@@ -497,6 +469,34 @@ runs:
         - ``Frontend-QA-Report.html``
         - ``Frontend-QA-Report.png``
         "@ >> $env:GITHUB_STEP_SUMMARY
+
+    - name: Build frontend repository
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location "${{ inputs.repository-root }}"
+
+        try {
+          Write-Host "Installing frontend repository dependencies..."
+          npm ci
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend npm ci failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Running frontend production build..."
+          npm run build
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend npm run build failed with exit code $LASTEXITCODE."
+          }
+
+          Write-Host "Frontend build passed."
+        }
+        finally {
+          Pop-Location
+        }
 
     - name: Enforce frontend QA decision
       if: always()
