@@ -1,537 +1,501 @@
-name: Frontend PR Quality Analysis
-description: Run frontend PR quality detectors and generate JSON, Markdown, HTML, and PNG reports.
+name: Gr8Books Neo Backend PR Analysis
+
+description: >
+  Runs PR-focused Madge, Knip, and Semgrep analysis and generates
+  a developer-friendly quality summary.
 
 inputs:
   repository-root:
-    description: Absolute path to the checked-out frontend repository.
-    required: true
+    description: Absolute path of the checked-out backend repository
+    required: false
+    default: ""
+
+  tsconfig-path:
+    description: TypeScript configuration path relative to the backend repository
+    required: false
+    default: "tsconfig.json"
 
   base-reference:
-    description: Base commit SHA or branch used for PR diff analysis.
+    description: Base commit SHA or Git reference used for PR comparison
     required: true
 
   head-reference:
-    description: Head commit SHA or branch used for PR diff analysis.
+    description: Head commit SHA or Git reference used for PR comparison
     required: true
 
-  maximum-findings-per-rule:
-    description: Maximum number of findings retained for each rule.
+  maximum-findings-per-tool:
+    description: Maximum findings displayed for each analyzer
     required: false
-    default: "50"
-
-  fail-on-blockers:
-    description: Fail the action when blocker findings exist.
-    required: false
-    default: "true"
-
-  fail-on-warnings:
-    description: Fail the action when warning findings exist.
-    required: false
-    default: "false"
+    default: "10"
 
 outputs:
-  report-json:
-    description: Absolute path to the generated frontend JSON report.
-    value: ${{ steps.paths.outputs.report-json }}
+  overall-status:
+    description: Overall QA status
+    value: ${{ steps.summary.outputs.overall_status }}
 
-  report-markdown:
-    description: Absolute path to the generated frontend Markdown report.
-    value: ${{ steps.paths.outputs.report-markdown }}
+  blocking-result-count:
+    description: Number of blocking analyzer results
+    value: ${{ steps.summary.outputs.blocking_result_count }}
 
-  report-html:
-    description: Absolute path to the generated frontend HTML report.
-    value: ${{ steps.paths.outputs.report-html }}
+  blocking-finding-count:
+    description: Number of blocking findings
+    value: ${{ steps.summary.outputs.blocking_finding_count }}
 
-  report-png:
-    description: Absolute path to the generated frontend PNG report.
-    value: ${{ steps.paths.outputs.report-png }}
+  advisory-finding-count:
+    description: Number of advisory findings
+    value: ${{ steps.summary.outputs.advisory_finding_count }}
 
-  decision:
-    description: Frontend PR quality decision label.
-    value: ${{ steps.result.outputs.decision }}
-
-  status:
-    description: Frontend PR quality status.
-    value: ${{ steps.result.outputs.status }}
-
-  blockers:
-    description: Number of blocker findings.
-    value: ${{ steps.result.outputs.blockers }}
-
-  warnings:
-    description: Number of warning findings.
-    value: ${{ steps.result.outputs.warnings }}
-
-  findings:
-    description: Total number of findings.
-    value: ${{ steps.result.outputs.findings }}
+  summary-path:
+    description: Generated Markdown summary path
+    value: ${{ steps.summary.outputs.summary_path }}
 
 runs:
   using: composite
 
   steps:
-    - name: Resolve frontend QA paths
+    - name: Resolve QA paths
       id: paths
-      shell: powershell
+      shell: pwsh
       env:
         INPUT_REPOSITORY_ROOT: ${{ inputs.repository-root }}
-        ACTION_PATH: ${{ github.action_path }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        $automationRoot = [System.IO.Path]::GetFullPath(
-          (Join-Path $env:ACTION_PATH "..\..\..")
+        $toolkitRoot = [System.IO.Path]::GetFullPath(
+          (Join-Path $env:GITHUB_ACTION_PATH "..\..\..")
         )
 
-        $repositoryRoot = [System.IO.Path]::GetFullPath(
-          $env:INPUT_REPOSITORY_ROOT
-        )
+        if ([string]::IsNullOrWhiteSpace($env:INPUT_REPOSITORY_ROOT)) {
+          $repositoryRoot = [System.IO.Path]::GetFullPath(
+            $env:GITHUB_WORKSPACE
+          )
+        }
+        else {
+          $repositoryRoot = [System.IO.Path]::GetFullPath(
+            $env:INPUT_REPOSITORY_ROOT
+          )
+        }
 
-        if (-not (Test-Path -LiteralPath $automationRoot -PathType Container)) {
-          throw "Automation root does not exist: $automationRoot"
+        if (-not (Test-Path -LiteralPath $toolkitRoot -PathType Container)) {
+          throw "Toolkit root does not exist: $toolkitRoot"
         }
 
         if (-not (Test-Path -LiteralPath $repositoryRoot -PathType Container)) {
-          throw "Frontend repository root does not exist: $repositoryRoot"
+          throw "Repository root does not exist: $repositoryRoot"
         }
 
-        $reportsDirectory = Join-Path $repositoryRoot "reports"
-
-        $reportJson = Join-Path `
-          $reportsDirectory `
-          "frontend-quality-results.json"
-
-        $reportMarkdown = Join-Path `
-          $reportsDirectory `
-          "Frontend-QA-Report.md"
-
-        $reportHtml = Join-Path `
-          $reportsDirectory `
-          "Frontend-QA-Report.html"
-
-        $reportPng = Join-Path `
-          $reportsDirectory `
-          "Frontend-QA-Report.png"
+        $reportsRoot = Join-Path $repositoryRoot "reports"
+        $rawDirectory = Join-Path $reportsRoot "raw"
+        $resultsDirectory = Join-Path $reportsRoot "results"
 
         New-Item `
           -ItemType Directory `
-          -Path $reportsDirectory `
+          -Path $rawDirectory `
           -Force |
           Out-Null
 
-        "automation-root=$automationRoot" >> $env:GITHUB_OUTPUT
-        "repository-root=$repositoryRoot" >> $env:GITHUB_OUTPUT
-        "reports-directory=$reportsDirectory" >> $env:GITHUB_OUTPUT
-        "report-json=$reportJson" >> $env:GITHUB_OUTPUT
-        "report-markdown=$reportMarkdown" >> $env:GITHUB_OUTPUT
-        "report-html=$reportHtml" >> $env:GITHUB_OUTPUT
-        "report-png=$reportPng" >> $env:GITHUB_OUTPUT
+        New-Item `
+          -ItemType Directory `
+          -Path $resultsDirectory `
+          -Force |
+          Out-Null
 
-        Write-Host ""
-        Write-Host "Frontend QA paths"
-        Write-Host "-----------------"
-        Write-Host "Automation root : $automationRoot"
-        Write-Host "Repository root : $repositoryRoot"
-        Write-Host "Reports         : $reportsDirectory"
-        Write-Host ""
+        $changedFilesPath = Join-Path $rawDirectory "changed-files.json"
+        $summaryPath = Join-Path $reportsRoot "Backend-PR-Quality.md"
 
-    - name: Verify frontend QA files
-      shell: powershell
+        "toolkit_root=$toolkitRoot" >> $env:GITHUB_OUTPUT
+        "repository_root=$repositoryRoot" >> $env:GITHUB_OUTPUT
+        "reports_root=$reportsRoot" >> $env:GITHUB_OUTPUT
+        "raw_directory=$rawDirectory" >> $env:GITHUB_OUTPUT
+        "results_directory=$resultsDirectory" >> $env:GITHUB_OUTPUT
+        "changed_files_path=$changedFilesPath" >> $env:GITHUB_OUTPUT
+        "summary_path=$summaryPath" >> $env:GITHUB_OUTPUT
+
+        Write-Host "Toolkit root: $toolkitRoot"
+        Write-Host "Backend repository root: $repositoryRoot"
+        Write-Host "Reports root: $reportsRoot"
+
+    - name: Install QA toolkit dependencies
+      shell: pwsh
       env:
-        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        $requiredFiles = @(
-          "package.json",
-          "package-lock.json",
-          "configs\frontend-standards.json",
-          "schemas\frontend-resultschema.json",
-          "scripts\frontend\analyze-frontend.mjs",
-          "scripts\frontend\generate-summary.ps1",
-          "scripts\frontend\capture-dashboard.mjs",
-          "scripts\detector\hooks.mjs",
-          "scripts\detector\types.mjs",
-          "scripts\detector\fetching.mjs",
-          "scripts\detector\structure.mjs",
-          "scripts\detector\ui.mjs",
-          "scripts\detector\constants.mjs",
-          "scripts\detector\data.mjs"
-        )
-
-        foreach ($relativePath in $requiredFiles) {
-          $absolutePath = Join-Path `
-            $env:AUTOMATION_ROOT `
-            $relativePath
-
-          if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
-            throw "Required frontend QA file is missing: $absolutePath"
-          }
-        }
-
-        Write-Host "Frontend QA files verified."
-
-    - name: Verify Node.js
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        node --version
-        npm --version
-
-    - name: Install frontend QA dependencies
-      shell: powershell
-      env:
-        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        Push-Location $env:AUTOMATION_ROOT
+        Push-Location $env:TOOLKIT_ROOT
 
         try {
           npm ci
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE."
-          }
-
-          npx playwright install chromium
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Playwright Chromium installation failed with exit code $LASTEXITCODE."
-          }
         }
         finally {
           Pop-Location
         }
 
-    - name: Build frontend repository
-      id: build
-      continue-on-error: true
+    - name: Build backend repository
       shell: powershell
-      env:
-        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository-root }}
       run: |
         $ErrorActionPreference = "Stop"
 
-        Push-Location $env:REPOSITORY_ROOT
+        Push-Location "${{ inputs.repository-root }}"
 
         try {
-          Write-Host "Installing frontend repository dependencies..."
-          npm ci
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Frontend npm ci failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "Running frontend production build..."
+          Write-Host "Running backend production build..."
           npm run build
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Frontend npm run build failed with exit code $LASTEXITCODE."
+            throw "Backend npm run build failed with exit code $LASTEXITCODE."
           }
 
-          Write-Host "Frontend build passed."
+          Write-Host "Backend build passed."
         }
         finally {
           Pop-Location
         }
 
-    - name: Verify frontend QA modules
-      shell: powershell
-      env:
-        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+    - name: Setup Python for Semgrep
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Semgrep
+      shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
 
-        Push-Location $env:AUTOMATION_ROOT
+        python -m pip install --upgrade pip
+        python -m pip install semgrep
+
+        semgrep --version
+    - name: Verify QA tools
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location $env:TOOLKIT_ROOT
 
         try {
-          node -e "import('playwright').then(() => console.log('Playwright package is available.'))"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Playwright module verification failed."
-          }
-
-          node -e "import('./scripts/frontend/analyze-frontend.mjs').then(m => { if (typeof m.analyzeFrontend !== 'function') throw new Error('analyzeFrontend export is missing'); console.log('Frontend analyzer is available.'); })"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Frontend analyzer verification failed."
-          }
+          npm run verify:tools
         }
         finally {
           Pop-Location
         }
 
-    - name: Run frontend quality analysis
-      id: analyze
-      shell: powershell
+    - name: Determine PR changed files
+      id: changed-files
+      shell: pwsh
       env:
-        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
-        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository-root }}
-        REPORTS_DIRECTORY: ${{ steps.paths.outputs.reports-directory }}
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
         BASE_REFERENCE: ${{ inputs.base-reference }}
         HEAD_REFERENCE: ${{ inputs.head-reference }}
-        MAXIMUM_FINDINGS: ${{ inputs.maximum-findings-per-rule }}
-        FAIL_ON_BLOCKERS: ${{ inputs.fail-on-blockers }}
-        FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
       run: |
-        $ErrorActionPreference = "Continue"
+        $ErrorActionPreference = "Stop"
 
-        Push-Location $env:AUTOMATION_ROOT
+        $commonScript = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\common.ps1"
+
+        if (-not (Test-Path -LiteralPath $commonScript -PathType Leaf)) {
+          throw "Required common script was not found: $commonScript"
+        }
+
+        . $commonScript
+
+        Write-QaLog `
+          -Level "INFO" `
+          -Message "Comparing $env:BASE_REFERENCE...$env:HEAD_REFERENCE"
+
+        $changedFiles = Get-QaChangedFiles `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -BaseReference $env:BASE_REFERENCE `
+          -HeadReference $env:HEAD_REFERENCE
+
+        $changedFilesDocument = [ordered]@{
+          baseReference = $env:BASE_REFERENCE
+          headReference = $env:HEAD_REFERENCE
+          count = $changedFiles.Count
+          files = @($changedFiles)
+        }
+
+        Write-QaJson `
+          -Value $changedFilesDocument `
+          -Path $env:CHANGED_FILES_PATH |
+          Out-Null
+
+        "count=$($changedFiles.Count)" >> $env:GITHUB_OUTPUT
+
+        Write-QaLog `
+          -Level "SUCCESS" `
+          -Message "$($changedFiles.Count) changed file(s) detected."
+
+        foreach ($file in $changedFiles) {
+          Write-Host " - $file"
+        }
+
+    - name: Run Madge circular dependency analysis
+      id: madge
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+        TSCONFIG_PATH: ${{ inputs.tsconfig-path }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-madge.ps1"
+
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "madge-result.json"
+
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "madge-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -TsConfigPath $env:TSCONFIG_PATH `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
+    - name: Run Knip unused code analysis
+      id: knip
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-knip.ps1"
+
+        $configPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "configs\knip.json"
+
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "knip-result.json"
+
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "knip-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ConfigPath $configPath `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
+    - name: Run Semgrep security analysis
+      id: semgrep
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-semgrep.ps1"
+
+        $configPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "configs\semgrep.yml"
+
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "semgrep-result.json"
+
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "semgrep-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ConfigPath $configPath `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
+    - name: Generate developer-friendly summary
+      id: summary
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        SUMMARY_PATH: ${{ steps.paths.outputs.summary_path }}
+        MAXIMUM_FINDINGS: ${{ inputs.maximum-findings-per-tool }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\generate-summary.ps1"
+
+        & $scriptPath `
+          -ResultsDirectory $env:RESULTS_DIRECTORY `
+          -SummaryPath $env:SUMMARY_PATH `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -MaximumDisplayedFindingsPerTool ([int]$env:MAXIMUM_FINDINGS)
+
+        exit $LASTEXITCODE
+    - name: Generate PR dashboard
+      if: always()
+      continue-on-error: true
+      shell: powershell
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\generate-dashboard.ps1"
+
+        $templatePath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "templates\dashboard.html"
+
+        $outputPath = Join-Path `
+          $env:REPOSITORY_ROOT `
+          "reports\QA-Report.html"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ResultsDirectory $env:RESULTS_DIRECTORY `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -TemplatePath $templatePath `
+          -OutputPath $outputPath
+
+        if (-not $?) {
+          throw "PR dashboard generation failed."
+        }
+
+        exit 0  
+
+        exit $LASTEXITCODE
+
+    - name: Install Playwright Chromium
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+      run: |
+        Push-Location $env:TOOLKIT_ROOT
 
         try {
-          $arguments = @(
-            ".\scripts\frontend\analyze-frontend.mjs",
-            "--repository-root",
-            $env:REPOSITORY_ROOT,
-            "--base",
-            $env:BASE_REFERENCE,
-            "--head",
-            $env:HEAD_REFERENCE,
-            "--output-directory",
-            $env:REPORTS_DIRECTORY,
-            "--maximum-findings-per-rule",
-            $env:MAXIMUM_FINDINGS,
-            "--verbose"
-          )
-
-          if ($env:FAIL_ON_BLOCKERS -eq "true") {
-            $arguments += "--fail-on-blockers"
-          }
-          else {
-            $arguments += "--no-fail-on-blockers"
-          }
-
-          if ($env:FAIL_ON_WARNINGS -eq "true") {
-            $arguments += "--fail-on-warnings"
-          }
-          else {
-            $arguments += "--no-fail-on-warnings"
-          }
-
-          & node @arguments
-          $analysisExitCode = $LASTEXITCODE
-
-          "analysis-exit-code=$analysisExitCode" >> $env:GITHUB_OUTPUT
-
-          if (
-            $analysisExitCode -ne 0 -and
-            $analysisExitCode -ne 1
-          ) {
-            throw "Frontend analyzer failed with exit code $analysisExitCode."
-          }
+          npx playwright install chromium
         }
         finally {
           Pop-Location
         }
 
-        exit 0
-
-    - name: Generate frontend QA summary
+    - name: Capture PR dashboard PNG
       if: always()
-      shell: powershell
+      continue-on-error: true
+      shell: pwsh
       env:
-        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
-        REPORT_JSON: ${{ steps.paths.outputs.report-json }}
-        REPORTS_DIRECTORY: ${{ steps.paths.outputs.reports-directory }}
-        MAXIMUM_FINDINGS: ${{ inputs.maximum-findings-per-rule }}
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
       run: |
-        $ErrorActionPreference = "Stop"
-
-        if (-not (Test-Path -LiteralPath $env:REPORT_JSON -PathType Leaf)) {
-          throw "Frontend JSON report was not generated: $env:REPORT_JSON"
-        }
-
-        $summaryScript = Join-Path `
-          $env:AUTOMATION_ROOT `
-          "scripts\frontend\generate-summary.ps1"
-
-        powershell `
-          -NoProfile `
-          -ExecutionPolicy Bypass `
-          -File $summaryScript `
-          -InputPath $env:REPORT_JSON `
-          -OutputDirectory $env:REPORTS_DIRECTORY `
-          -MaximumFindings ([int]$env:MAXIMUM_FINDINGS)
-
-        if ($LASTEXITCODE -ne 0) {
-          throw "Frontend QA summary generation failed with exit code $LASTEXITCODE."
-        }
-
-    - name: Capture frontend QA dashboard
-      if: always()
-      shell: powershell
-      env:
-        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
-        REPORT_HTML: ${{ steps.paths.outputs.report-html }}
-        REPORT_PNG: ${{ steps.paths.outputs.report-png }}
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        if (-not (Test-Path -LiteralPath $env:REPORT_HTML -PathType Leaf)) {
-          throw "Frontend HTML report was not generated: $env:REPORT_HTML"
-        }
-
         $captureScript = Join-Path `
-          $env:AUTOMATION_ROOT `
-          "scripts\frontend\capture-dashboard.mjs"
+          $env:TOOLKIT_ROOT `
+          "scripts\capture-dashboard.mjs"
 
-        Push-Location $env:AUTOMATION_ROOT
+        $htmlPath = Join-Path `
+          $env:REPOSITORY_ROOT `
+          "reports\QA-Report.html"
+
+        $pngPath = Join-Path `
+          $env:REPOSITORY_ROOT `
+          "reports\QA-Report.png"
+
+        Push-Location $env:TOOLKIT_ROOT
 
         try {
-          node $captureScript `
-            --html $env:REPORT_HTML `
-            --output $env:REPORT_PNG `
-            --width 1440 `
-            --height 1200 `
-            --full-page
+          node $captureScript $htmlPath $pngPath
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Frontend dashboard capture failed with exit code $LASTEXITCODE."
+            throw "Dashboard screenshot generation failed with exit code $LASTEXITCODE."
           }
         }
         finally {
           Pop-Location
         }
 
-        if (-not (Test-Path -LiteralPath $env:REPORT_PNG -PathType Leaf)) {
-          throw "Frontend PNG report was not generated: $env:REPORT_PNG"
-        }
-
-        $pngSize = (Get-Item -LiteralPath $env:REPORT_PNG).Length
-
-        if ($pngSize -le 0) {
-          throw "Frontend PNG report is empty: $env:REPORT_PNG"
-        }
-
-        Write-Host "Frontend dashboard PNG size: $pngSize bytes"
-
-    - name: Read frontend QA result
+    - name: Enforce final QA result
       if: always()
-      id: result
-      shell: powershell
+      shell: pwsh
       env:
-        REPORT_JSON: ${{ steps.paths.outputs.report-json }}
+        OVERALL_STATUS: ${{ steps.summary.outputs.overall_status }}
       run: |
-        $ErrorActionPreference = "Stop"
+        $status = $env:OVERALL_STATUS
 
-        if (-not (Test-Path -LiteralPath $env:REPORT_JSON -PathType Leaf)) {
-          throw "Frontend QA report was not generated: $env:REPORT_JSON"
+        if ([string]::IsNullOrWhiteSpace($status)) {
+          Write-Error "The QA summary did not provide an overall status."
+          exit 1
         }
 
-        $report = Get-Content `
-          -LiteralPath $env:REPORT_JSON `
-          -Raw `
-          -Encoding UTF8 |
-          ConvertFrom-Json
+        Write-Host "Backend PR Quality status: $status"
 
-        $decision = [string]$report.decision.label
-        $status = [string]$report.decision.status
-        $blockers = [int]$report.summary.blockers
-        $warnings = [int]$report.summary.warnings
-        $findings = [int]$report.summary.total
-
-        "decision=$decision" >> $env:GITHUB_OUTPUT
-        "status=$status" >> $env:GITHUB_OUTPUT
-        "blockers=$blockers" >> $env:GITHUB_OUTPUT
-        "warnings=$warnings" >> $env:GITHUB_OUTPUT
-        "findings=$findings" >> $env:GITHUB_OUTPUT
-
-        Write-Host ""
-        Write-Host "Frontend PR Quality Result"
-        Write-Host "--------------------------"
-        Write-Host "Decision : $decision"
-        Write-Host "Status   : $status"
-        Write-Host "Findings : $findings"
-        Write-Host "Blockers : $blockers"
-        Write-Host "Warnings : $warnings"
-        Write-Host ""
-
-    - name: Write GitHub job summary
-      if: always()
-      shell: powershell
-      env:
-        REPORT_JSON: ${{ steps.paths.outputs.report-json }}
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        if (-not (Test-Path -LiteralPath $env:REPORT_JSON -PathType Leaf)) {
-          Write-Warning "Frontend JSON report is unavailable; GitHub summary was not generated."
-          exit 0
-        }
-
-        $report = Get-Content `
-          -LiteralPath $env:REPORT_JSON `
-          -Raw `
-          -Encoding UTF8 |
-          ConvertFrom-Json
-
-        $decision = [string]$report.decision.label
-        $status = [string]$report.decision.status
-        $changedFiles = [int]$report.analysis.changedFileCount
-        $findings = [int]$report.summary.total
-        $blockers = [int]$report.summary.blockers
-        $warnings = [int]$report.summary.warnings
-        $information = [int]$report.summary.info
-
-        $icon = switch ($status) {
-          "blocked" { "❌" }
-          "warning" { "⚠️" }
-          default { "✅" }
-        }
-
-        @"
-        # $icon Frontend PR Quality
-
-        **Decision:** $decision
-
-        | Metric | Count |
-        |---|---:|
-        | Changed files | $changedFiles |
-        | Findings | $findings |
-        | Blockers | $blockers |
-        | Warnings | $warnings |
-        | Information | $information |
-
-        Generated reports:
-
-        - ``frontend-quality-results.json``
-        - ``Frontend-QA-Report.md``
-        - ``Frontend-QA-Report.html``
-        - ``Frontend-QA-Report.png``
-        "@ >> $env:GITHUB_STEP_SUMMARY
-
-    - name: Enforce frontend QA decision
-      if: always()
-      shell: powershell
-      env:
-        BUILD_OUTCOME: ${{ steps.build.outcome }}
-        ANALYSIS_EXIT_CODE: ${{ steps.analyze.outputs.analysis-exit-code }}
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        if ($env:BUILD_OUTCOME -ne "success") {
-          throw "Frontend npm run build failed. Fix the build before merging this pull request."
-        }
-
-        if ([string]::IsNullOrWhiteSpace($env:ANALYSIS_EXIT_CODE)) {
-          throw "Frontend analyzer did not provide an exit code."
-        }
-
-        $analysisExitCode = [int]$env:ANALYSIS_EXIT_CODE
-
-        switch ($analysisExitCode) {
-          0 {
-            Write-Host "Frontend PR quality checks passed."
+        switch ($status) {
+          "PASSED" {
+            Write-Host "No blocking advisory findings were detected."
             exit 0
           }
 
-          1 {
-            throw "Frontend PR quality checks require changes."
+          "WARNING" {
+            Write-Warning "The PR passed with advisory findings."
+            exit 0
+          }
+
+          "SKIPPED" {
+            Write-Host "No relevant files required advisory analysis."
+            exit 0
+          }
+
+          "FAILED" {
+            Write-Error "Blocking PR quality findings were detected."
+            exit 1
+          }
+
+          "ERROR" {
+            Write-Error "One or more QA analyzers failed to complete."
+            exit 1
           }
 
           default {
-            throw "Frontend PR quality analysis failed with exit code $analysisExitCode."
+            Write-Error "Unknown QA status: $status"
+            exit 1
           }
         }
