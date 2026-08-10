@@ -444,6 +444,13 @@ runs:
         Push-Location "${{ inputs.repository-root }}"
 
         try {
+          # CI-only local placeholders.
+          # `prisma generate` needs valid datasource values to load prisma.config.ts,
+          # but it does not connect to the database.
+          $env:APP_ENV = "local"
+          $env:DATABASE_URL = "postgresql://ci:ci@127.0.0.1:5432/gr8booksneo_ci?schema=public"
+          $env:DIRECT_URL = "postgresql://ci:ci@127.0.0.1:5432/gr8booksneo_ci?schema=public"
+
           Write-Host "Installing backend repository dependencies..."
           npm ci
 
