@@ -18,6 +18,8 @@ const COMMON_UI_LITERALS = new Set([
   "particulars", "remarks", "reference", "referenceno", "status",
   "header", "footer", "page", "row", "column",
   "true", "false", "null", "undefined",
+  // Validation/config vocabulary: these describe library behavior, not business constants.
+  "alphanumeric", "email", "required", "optional", "nullable",
 ]);
 
 function normalizePath(value) {
@@ -226,8 +228,15 @@ function checkHardcodedStatuses({ file, source, literals, config, findings }) {
     const list = grouped.get(normalized) ?? [];
     list.push(literal); grouped.set(normalized, list);
   }
+  // Two occurrences in one changed file is commonly ordinary inline UI logic.
+  // Require at least three meaningful status uses before recommending extraction.
+  const threshold = Math.max(
+    Number(config.constants?.minimumStatusOccurrences) || 3,
+    3,
+  );
+
   for (const occurrences of grouped.values()) {
-    if (occurrences.length < 2) continue;
+    if (occurrences.length < threshold) continue;
     const first = occurrences[0];
     findings.push(createFinding({
       ruleId: "constants.hardcodedStatus", severity: rule.severity,

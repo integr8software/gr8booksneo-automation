@@ -152,6 +152,9 @@ function appearsFrontendSpecific(name) {
 function isTemporaryTypeName(name) {
   return /^(Temporary|Temp|Legacy|Fallback)/i.test(name);
 }
+function appearsReusableBusinessType(name) {
+  return /(Status|State|Category|Classification|Permission|Role|Account|Ledger|Journal|Invoice|Voucher|Payment|Transaction|Inventory|Warehouse|Branch|Company|Customer|Supplier|Employee|Product|Project|Tax|Currency|Address|Contact|Record|Entity|Model|Result)$/i.test(name);
+}
 function countIdentifierReferences(source, name) {
   const masked = maskCommentsAndStrings(source);
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -214,16 +217,21 @@ function detectTypeOutsideExpectedLocation({ file, source, config, findings }) {
     const references = countIdentifierReferences(source, declared.name);
     const localFrontendType =
       appearsFrontendSpecific(declared.name) ||
-      ((isUiFile(file, config) || isHooksFile(file)) &&
-        !declared.exported);
+      isUiFile(file, config) ||
+      isHooksFile(file);
 
     if (localFrontendType) continue;
 
     /*
-     * Non-exported declarations are local implementation details. Reference
-     * count inside one file is not evidence that they are shared types.
+     * Exported does not automatically mean "shared". Feature-local helpers,
+     * generic mapped types, and implementation types are valid beside the
+     * code that owns them. Only flag declarations with stronger evidence
+     * that they model reusable business/domain data.
      */
     if (!declared.exported) continue;
+    if (!appearsReusableBusinessType(declared.name)) continue;
+    if (references < 2) continue;
+
     const line = getLineNumber(source, declared.index);
     findings.push(createFinding({
       ruleId: "types.typeOutsideExpectedLocation", severity: rule.severity,

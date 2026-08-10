@@ -296,6 +296,34 @@ function stripImportStatements(source) {
       "",
     );
 }
+function normalizeComponentForComparison(source) {
+  return stripImportStatements(source)
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/.*$/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function tokenSimilarity(leftSource, rightSource) {
+  const tokenize = (value) => {
+    const normalized = normalizeComponentForComparison(value);
+    return new Set(normalized.match(/[a-z_$][a-z0-9_$]*|<\/?[a-z][a-z0-9.-]*/g) ?? []);
+  };
+
+  const left = tokenize(leftSource);
+  const right = tokenize(rightSource);
+
+  if (left.size < 12 || right.size < 12) return 0;
+
+  let intersection = 0;
+  for (const token of left) {
+    if (right.has(token)) intersection += 1;
+  }
+
+  const union = new Set([...left, ...right]).size;
+  return union === 0 ? 0 : intersection / union;
+}
 
 function findFirstResponsibilitySignal(source) {
   const executableSource = stripImportStatements(source);
@@ -552,21 +580,52 @@ function checkPossibleDuplicateUi({
     return;
   }
 
+  const similarityThreshold = Math.max(
+    Number(config.ui?.duplicateSimilarityThreshold) || 0.72,
+    0.6,
+  );
+
+  const similarFiles = duplicateFiles
+    .map((duplicateFile) => {
+      const absoluteDuplicate = path.resolve(
+        repositoryRoot,
+        ...normalizePath(duplicateFile).split("/"),
+      );
+
+      if (!fs.existsSync(absoluteDuplicate)) return null;
+
+      const duplicateSource = fs.readFileSync(absoluteDuplicate, "utf8");
+      const similarity = tokenSimilarity(source, duplicateSource);
+
+      return { file: duplicateFile, similarity };
+    })
+    .filter((item) => item && item.similarity >= similarityThreshold)
+    .sort((left, right) => right.similarity - left.similarity);
+
+  /*
+   * A matching filename alone is not duplication. Names such as Main.tsx,
+   * Action.tsx, Page.tsx, and Form.tsx are expected across feature modules.
+   * Warn only when the implementations also have substantial similarity.
+   */
+  if (similarFiles.length === 0) {
+    return;
+  }
+
   findings.push(
     createFinding({
       ruleId: "ui.possibleDuplicateUi",
       severity: rule.severity,
       title: "Possible duplicate UI component detected",
       message:
-        `Another component with the filename "${path.basename(file)}" already exists in the configured UI directories.`,
+        `A component named "${path.basename(file)}" has materially similar implementation in another configured UI directory.`,
       recommendation:
-        "Review the related components and reuse or extend an existing shared component when their responsibilities overlap.",
+        "Review the related components and reuse or extend an existing shared component only when their responsibilities genuinely overlap.",
       file,
-      relatedFiles: duplicateFiles.slice(0, 10),
-      evidence: duplicateFiles
-        .slice(0, 10)
-        .map((duplicateFile) => `Matching filename: ${duplicateFile}`),
-      confidence: "low",
+      relatedFiles: similarFiles.slice(0, 10).map((item) => item.file),
+      evidence: similarFiles.slice(0, 10).map(
+        (item) => `Similar component: ${item.file} (${Math.round(item.similarity * 100)}% token similarity)`,
+      ),
+      confidence: "medium",
     }),
   );
 }
