@@ -390,24 +390,39 @@ runs:
 
           Add-BuildLine "Installing backend repository dependencies..."
 
+          # Windows PowerShell 5.1 can surface native stderr (including harmless
+          # npm warnings) as PowerShell error records. Do not let warnings stop
+          # the step; use npm's real process exit code as the source of truth.
+          $previousErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+
           npm ci 2>&1 | ForEach-Object {
             Add-BuildLine $_
           }
 
-          if ($LASTEXITCODE -ne 0) {
-            $exitCode = $LASTEXITCODE
+          $npmCiExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $previousErrorActionPreference
+
+          if ($npmCiExitCode -ne 0) {
+            $exitCode = $npmCiExitCode
             throw "Backend npm ci failed with exit code $exitCode."
           }
 
           $phase = "build"
           Add-BuildLine "Running backend production build..."
 
+          $previousErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+
           npm run build 2>&1 | ForEach-Object {
             Add-BuildLine $_
           }
 
-          if ($LASTEXITCODE -ne 0) {
-            $exitCode = $LASTEXITCODE
+          $npmBuildExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $previousErrorActionPreference
+
+          if ($npmBuildExitCode -ne 0) {
+            $exitCode = $npmBuildExitCode
             throw "Backend npm run build failed with exit code $exitCode."
           }
 
