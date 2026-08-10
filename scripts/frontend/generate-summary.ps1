@@ -13,7 +13,10 @@ param(
     [string]$HtmlFileName = "Frontend-QA-Report.html",
 
     [Parameter()]
-    [int]$MaximumFindings = 50
+    [int]$MaximumFindings = 50,
+
+    [Parameter()]
+    [string]$BuildResultPath
 )
 
 Set-StrictMode -Version Latest
@@ -58,6 +61,14 @@ $MarkdownPath = Join-Path `
 $HtmlPath = Join-Path `
     $OutputDirectory `
     $HtmlFileName
+
+if (-not [string]::IsNullOrWhiteSpace($BuildResultPath)) {
+    if (-not [System.IO.Path]::IsPathRooted($BuildResultPath)) {
+        $BuildResultPath = Join-Path $AutomationRoot $BuildResultPath
+    }
+
+    $BuildResultPath = [System.IO.Path]::GetFullPath($BuildResultPath)
+}
 
 function Get-PropertyValue {
     param(
@@ -556,6 +567,100 @@ $allFindings = @(
         -DefaultValue @()
 )
 
+$buildResult = $null
+$buildFinding = $null
+$buildRun = $null
+
+if (
+    -not [string]::IsNullOrWhiteSpace($BuildResultPath) -and
+    (Test-Path -LiteralPath $BuildResultPath -PathType Leaf)
+) {
+    try {
+        $buildResult = Get-Content `
+            -LiteralPath $BuildResultPath `
+            -Raw `
+            -Encoding UTF8 |
+            ConvertFrom-Json
+    }
+    catch {
+        throw "Unable to read frontend build result JSON: $($_.Exception.Message)"
+    }
+
+    $buildStatus = [string](
+        Get-PropertyValue `
+            -Object $buildResult `
+            -Name "status" `
+            -DefaultValue "failed"
+    )
+
+    $buildDurationMs = [int](
+        Get-PropertyValue `
+            -Object $buildResult `
+            -Name "durationMs" `
+            -DefaultValue 0
+    )
+
+    $buildRun = [pscustomobject]@{
+        detector = "Production Build"
+        status = if ($buildStatus -eq "passed") { "completed" } else { "failed" }
+        findings = if ($buildStatus -eq "passed") { 0 } else { 1 }
+        durationMs = $buildDurationMs
+    }
+
+    if ($buildStatus -ne "passed") {
+        $buildPhase = [string](
+            Get-PropertyValue `
+                -Object $buildResult `
+                -Name "phase" `
+                -DefaultValue "build"
+        )
+
+        $buildErrors = @(
+            Get-PropertyValue `
+                -Object $buildResult `
+                -Name "errors" `
+                -DefaultValue @()
+        )
+
+        $buildMessage = if ($buildPhase -eq "install") {
+            "Frontend dependency installation failed before the production build could run."
+        }
+        else {
+            "The frontend could not complete npm run build."
+        }
+
+        $buildSnippet = if ($buildErrors.Count -gt 0) {
+            ($buildErrors | Select-Object -First 10) -join "`n"
+        }
+        else {
+            "See the Build frontend repository step for the complete error output."
+        }
+
+        $buildFinding = [pscustomobject]@{
+            category = "build"
+            ruleId = "build.productionBuild"
+            severity = "blocker"
+            title = "Production build failed"
+            message = $buildMessage
+            recommendation = "Fix the reported build errors and push again. The PR will be retested automatically."
+            file = "npm run build"
+            line = $null
+            column = $null
+            codeSnippet = $buildSnippet
+            relatedFiles = @()
+            evidence = $buildErrors
+            detector = "build"
+            confidence = "high"
+        }
+
+        $allFindings = @($allFindings) + @($buildFinding)
+        $total += 1
+        $blockers += 1
+        $status = "blocked"
+        $decisionLabel = "QA Review Required"
+    }
+}
+
 $displayFindings = @(
     $allFindings |
         Select-Object -First $MaximumFindings
@@ -593,6 +698,10 @@ $detectorRuns = @(
         -Name "detectorRuns" `
         -DefaultValue @()
 )
+
+if ($null -ne $buildRun) {
+    $detectorRuns = @($detectorRuns) + @($buildRun)
+}
 
 # Markdown report
 

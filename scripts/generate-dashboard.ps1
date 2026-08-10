@@ -4,7 +4,8 @@
     [string]$ResultsDirectory = "",
     [string]$ChangedFilesPath = "",
     [string]$TemplatePath = "",
-    [string]$OutputPath = ""
+    [string]$OutputPath = "",
+    [string]$BuildResultPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -167,6 +168,15 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $ToolkitRoot "reports\QA-Report.html"
 }
 
+if ([string]::IsNullOrWhiteSpace($BuildResultPath)) {
+    $BuildResultPath = Join-Path $RepositoryRoot "reports\backend-build-result.json"
+}
+elseif (-not [IO.Path]::IsPathRooted($BuildResultPath)) {
+    $BuildResultPath = Join-Path $RepositoryRoot $BuildResultPath
+}
+
+$BuildResultPath = [IO.Path]::GetFullPath($BuildResultPath)
+
 if (-not (Test-Path -LiteralPath $TemplatePath -PathType Leaf)) {
     throw "Dashboard template not found: $TemplatePath"
 }
@@ -182,6 +192,31 @@ foreach ($file in $resultFiles) {
 }
 if ($results.Count -eq 0) {
     throw "No normalized result files were found in $ResultsDirectory"
+}
+
+$buildResult = Read-Json $BuildResultPath
+$buildFailed = $false
+$buildStatus = "SKIPPED"
+$buildDurationMs = 0
+$buildErrors = @()
+
+if ($null -ne $buildResult) {
+    $rawBuildStatus = if ($buildResult.PSObject.Properties["status"]) {
+        [string]$buildResult.status
+    } else {
+        "failed"
+    }
+
+    $buildStatus = if ($rawBuildStatus -eq "passed") { "PASSED" } else { "FAILED" }
+    $buildFailed = ($buildStatus -eq "FAILED")
+
+    if ($buildResult.PSObject.Properties["durationMs"]) {
+        $buildDurationMs = [int]$buildResult.durationMs
+    }
+
+    if ($buildResult.PSObject.Properties["errors"] -and $null -ne $buildResult.errors) {
+        $buildErrors = @($buildResult.errors)
+    }
 }
 
 $findings = @()
@@ -220,7 +255,33 @@ foreach ($result in $results) {
     }
 }
 
+if ($buildFailed) {
+    $buildErrorText = if ($buildErrors.Count -gt 0) {
+        ($buildErrors | Select-Object -First 10) -join " | "
+    } else {
+        "The backend production build returned a non-zero exit code."
+    }
+
+    $findings += [pscustomobject]@{
+        title = "Production build failed"
+        meta = "Must fix before merge · Production Build"
+        pill = "Must Fix"
+        kind = "must"
+        location = "npm run build"
+        problem = $buildErrorText
+        fix = "Fix the reported backend build errors and push again. The PR will be retested automatically."
+        symbol = "!"
+        symbolColor = "#d91f33"
+        isMustFix = $true
+    }
+}
+
 $overallStatus = Overall-Status $results
+
+if ($buildFailed) {
+    $overallStatus = "FAILED"
+}
+
 $overall = Overall-Info $overallStatus
 $changedCount = Get-ChangedCount (Read-Json $ChangedFilesPath)
 $blockingCount = @($findings | Where-Object isMustFix).Count
@@ -228,6 +289,7 @@ $advisoryCount = @($findings | Where-Object { -not $_.isMustFix }).Count
 
 $totalDuration = 0
 foreach ($result in $results) { $totalDuration += [int]$result.durationMs }
+$totalDuration += $buildDurationMs
 $durationText = if ($totalDuration -lt 1000) { "$totalDuration ms" } else { "{0:N1}s" -f ($totalDuration / 1000) }
 
 $repository = First-Text @($env:QA_REPOSITORY, $env:GITHUB_REPOSITORY, (Split-Path -Leaf $RepositoryRoot))
@@ -253,6 +315,15 @@ foreach ($categoryName in @("SECURITY","CIRCULAR_DEPENDENCIES","UNUSED_CODE")) {
 <div class="check-card card"><div class="icon-bubble $($category.Bubble)">$($category.Icon)</div><div><div class="check-name">$(Convert-ToHtmlText $category.Name)</div><div class="powered">Powered by $(Convert-ToHtmlText $category.Tool)</div></div><div class="result"><span class="badge $($badge.Class)">$(Convert-ToHtmlText $badge.Text)</span><div class="count">$(Convert-ToHtmlText $issueText)</div></div></div>
 "@
 }
+
+
+$buildBadge = Badge-Info $buildStatus
+$buildIssueCount = if ($buildFailed) { 1 } else { 0 }
+$buildIssueText = if ($buildFailed) { "1 blocking build issue" } elseif ($buildStatus -eq "PASSED") { "Production build passed" } else { "Build result unavailable" }
+
+$qualityCards += @"
+<div class="check-card card"><div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="#1261d8" stroke-width="2"><path d="M8 3h8l1 4h3v14H4V7h3l1-4Z"/><path d="M8 12h8M12 8v8"/></svg></div><div><div class="check-name">Production Build</div><div class="powered">Powered by npm run build</div></div><div class="result"><span class="badge $($buildBadge.Class)">$(Convert-ToHtmlText $buildBadge.Text)</span><div class="count">$(Convert-ToHtmlText $buildIssueText)</div></div></div>
+"@
 
 if ($findings.Count -eq 0) {
     $overviewIssues = '<div class="empty-issues">No issues need your attention.</div>'

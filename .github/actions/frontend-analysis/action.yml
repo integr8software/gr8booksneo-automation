@@ -113,6 +113,10 @@ runs:
           $reportsDirectory `
           "Frontend-QA-Report.png"
 
+        $buildResultJson = Join-Path `
+          $reportsDirectory `
+          "frontend-build-result.json"
+
         New-Item `
           -ItemType Directory `
           -Path $reportsDirectory `
@@ -126,6 +130,7 @@ runs:
         "report-markdown=$reportMarkdown" >> $env:GITHUB_OUTPUT
         "report-html=$reportHtml" >> $env:GITHUB_OUTPUT
         "report-png=$reportPng" >> $env:GITHUB_OUTPUT
+        "build-result-json=$buildResultJson" >> $env:GITHUB_OUTPUT
 
         Write-Host ""
         Write-Host "Frontend QA paths"
@@ -321,7 +326,8 @@ runs:
           -File $summaryScript `
           -InputPath $env:REPORT_JSON `
           -OutputDirectory $env:REPORTS_DIRECTORY `
-          -MaximumFindings ([int]$env:MAXIMUM_FINDINGS)
+          -MaximumFindings ([int]$env:MAXIMUM_FINDINGS) `
+          -BuildResultPath $env:BUILD_RESULT_PATH
 
         if ($LASTEXITCODE -ne 0) {
           throw "Frontend QA summary generation failed with exit code $LASTEXITCODE."
@@ -471,34 +477,110 @@ runs:
         "@ >> $env:GITHUB_STEP_SUMMARY
 
     - name: Build frontend repository
+      id: build
+      continue-on-error: true
       shell: powershell
+      env:
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository-root }}
+        BUILD_RESULT_PATH: ${{ steps.paths.outputs.build-result-json }}
+        NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3000/api/v1
       run: |
         $ErrorActionPreference = "Stop"
+        $startedAt = Get-Date
+        $phase = "install"
+        $exitCode = 0
+        $capturedLines = New-Object System.Collections.Generic.List[string]
 
-        # CI-only build value required by server-side API URL resolution during next build.
-        $env:NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:3000/api/v1"
+        function Add-BuildLine {
+          param([AllowNull()][object]$Value)
 
-        Push-Location "${{ inputs.repository-root }}"
+          if ($null -eq $Value) {
+            return
+          }
+
+          $text = [string]$Value
+          Write-Host $text
+          [void]$capturedLines.Add($text)
+        }
+
+        Push-Location $env:REPOSITORY_ROOT
 
         try {
-          Write-Host "Installing frontend repository dependencies..."
-          npm ci
+          Add-BuildLine "Installing frontend repository dependencies..."
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "Frontend npm ci failed with exit code $LASTEXITCODE."
+          npm ci 2>&1 | ForEach-Object {
+            Add-BuildLine $_
           }
 
-          Write-Host "Running frontend production build..."
-          npm run build
-
           if ($LASTEXITCODE -ne 0) {
-            throw "Frontend npm run build failed with exit code $LASTEXITCODE."
+            $exitCode = $LASTEXITCODE
+            throw "Frontend npm ci failed with exit code $exitCode."
           }
 
-          Write-Host "Frontend build passed."
+          $phase = "build"
+          Add-BuildLine "Running frontend production build..."
+
+          npm run build 2>&1 | ForEach-Object {
+            Add-BuildLine $_
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            $exitCode = $LASTEXITCODE
+            throw "Frontend npm run build failed with exit code $exitCode."
+          }
+
+          $phase = "complete"
+          Add-BuildLine "Frontend build passed."
+        }
+        catch {
+          if ($exitCode -eq 0) {
+            $exitCode = 1
+          }
+
+          Add-BuildLine $_.Exception.Message
         }
         finally {
           Pop-Location
+        }
+
+        $durationMs = [int]((Get-Date) - $startedAt).TotalMilliseconds
+
+        $importantErrors = @(
+          $capturedLines |
+            Where-Object {
+              $_ -match "Module not found|Can't resolve|Build error occurred|Failed to collect page data|Type error|error TS[0-9]+|^Error:|^error "
+            } |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique -First 20
+        )
+
+        if ($exitCode -ne 0 -and $importantErrors.Count -eq 0) {
+          $importantErrors = @(
+            $capturedLines |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Select-Object -Last 12
+          )
+        }
+
+        $buildResult = [ordered]@{
+          status = if ($exitCode -eq 0) { "passed" } else { "failed" }
+          phase = $phase
+          exitCode = $exitCode
+          durationMs = $durationMs
+          errors = @($importantErrors)
+        }
+
+        $buildResult |
+          ConvertTo-Json -Depth 6 |
+          Set-Content `
+            -LiteralPath $env:BUILD_RESULT_PATH `
+            -Encoding UTF8
+
+        Write-Host "Build result written to: $env:BUILD_RESULT_PATH"
+
+        if ($exitCode -ne 0) {
+          exit $exitCode
         }
 
     - name: Enforce frontend QA decision
@@ -506,8 +588,13 @@ runs:
       shell: powershell
       env:
         ANALYSIS_EXIT_CODE: ${{ steps.analyze.outputs.analysis-exit-code }}
+        BUILD_OUTCOME: ${{ steps.build.outcome }}
       run: |
         $ErrorActionPreference = "Stop"
+
+        if ($env:BUILD_OUTCOME -eq "failure") {
+          throw "Frontend production build failed. Review the Production Build blocker in the QA dashboard."
+        }
 
         if ([string]::IsNullOrWhiteSpace($env:ANALYSIS_EXIT_CODE)) {
           throw "Frontend analyzer did not provide an exit code."

@@ -102,6 +102,7 @@ runs:
 
         $changedFilesPath = Join-Path $rawDirectory "changed-files.json"
         $summaryPath = Join-Path $reportsRoot "Backend-PR-Quality.md"
+        $buildResultPath = Join-Path $reportsRoot "backend-build-result.json"
 
         "toolkit_root=$toolkitRoot" >> $env:GITHUB_OUTPUT
         "repository_root=$repositoryRoot" >> $env:GITHUB_OUTPUT
@@ -110,6 +111,7 @@ runs:
         "results_directory=$resultsDirectory" >> $env:GITHUB_OUTPUT
         "changed_files_path=$changedFilesPath" >> $env:GITHUB_OUTPUT
         "summary_path=$summaryPath" >> $env:GITHUB_OUTPUT
+        "build_result_path=$buildResultPath" >> $env:GITHUB_OUTPUT
 
         Write-Host "Toolkit root: $toolkitRoot"
         Write-Host "Backend repository root: $repositoryRoot"
@@ -349,6 +351,120 @@ runs:
           -MaximumDisplayedFindingsPerTool ([int]$env:MAXIMUM_FINDINGS)
 
         exit $LASTEXITCODE
+    - name: Build backend repository
+      id: build
+      if: always()
+      continue-on-error: true
+      shell: powershell
+      env:
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        BUILD_RESULT_PATH: ${{ steps.paths.outputs.build_result_path }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $startedAt = Get-Date
+        $phase = "install"
+        $exitCode = 0
+        $capturedLines = New-Object System.Collections.Generic.List[string]
+
+        function Add-BuildLine {
+          param([AllowNull()][object]$Value)
+
+          if ($null -eq $Value) {
+            return
+          }
+
+          $text = [string]$Value
+          Write-Host $text
+          [void]$capturedLines.Add($text)
+        }
+
+        Push-Location $env:REPOSITORY_ROOT
+
+        try {
+          # CI-only local placeholders. Prisma Client generation requires
+          # datasource values but `prisma generate` does not connect to them.
+          $env:APP_ENV = "local"
+          $env:DATABASE_URL = "postgresql://ci:ci@127.0.0.1:5432/gr8booksneo_dev?schema=public"
+          $env:DIRECT_URL = "postgresql://ci:ci@127.0.0.1:5432/gr8booksneo_dev?schema=public"
+
+          Add-BuildLine "Installing backend repository dependencies..."
+
+          npm ci 2>&1 | ForEach-Object {
+            Add-BuildLine $_
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            $exitCode = $LASTEXITCODE
+            throw "Backend npm ci failed with exit code $exitCode."
+          }
+
+          $phase = "build"
+          Add-BuildLine "Running backend production build..."
+
+          npm run build 2>&1 | ForEach-Object {
+            Add-BuildLine $_
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            $exitCode = $LASTEXITCODE
+            throw "Backend npm run build failed with exit code $exitCode."
+          }
+
+          $phase = "complete"
+          Add-BuildLine "Backend build passed."
+        }
+        catch {
+          if ($exitCode -eq 0) {
+            $exitCode = 1
+          }
+
+          Add-BuildLine $_.Exception.Message
+        }
+        finally {
+          Pop-Location
+        }
+
+        $durationMs = [int]((Get-Date) - $startedAt).TotalMilliseconds
+
+        $importantErrors = @(
+          $capturedLines |
+            Where-Object {
+              $_ -match "error TS[0-9]+|Cannot find module|Module not found|Property '.+' does not exist|has no exported member|Nest build|npm error|npm ERR!|^Error:"
+            } |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique -First 20
+        )
+
+        if ($exitCode -ne 0 -and $importantErrors.Count -eq 0) {
+          $importantErrors = @(
+            $capturedLines |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+              Select-Object -Last 12
+          )
+        }
+
+        $buildResult = [ordered]@{
+          status = if ($exitCode -eq 0) { "passed" } else { "failed" }
+          phase = $phase
+          exitCode = $exitCode
+          durationMs = $durationMs
+          errors = @($importantErrors)
+        }
+
+        $buildResult |
+          ConvertTo-Json -Depth 6 |
+          Set-Content `
+            -LiteralPath $env:BUILD_RESULT_PATH `
+            -Encoding UTF8
+
+        Write-Host "Backend build result written to: $env:BUILD_RESULT_PATH"
+
+        if ($exitCode -ne 0) {
+          exit $exitCode
+        }
+
     - name: Generate PR dashboard
       if: always()
       continue-on-error: true
@@ -358,6 +474,7 @@ runs:
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
         RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
         CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        BUILD_RESULT_PATH: ${{ steps.paths.outputs.build_result_path }}
       run: |
         $scriptPath = Join-Path `
           $env:TOOLKIT_ROOT `
@@ -377,7 +494,8 @@ runs:
           -ResultsDirectory $env:RESULTS_DIRECTORY `
           -ChangedFilesPath $env:CHANGED_FILES_PATH `
           -TemplatePath $templatePath `
-          -OutputPath $outputPath
+          -OutputPath $outputPath `
+          -BuildResultPath $env:BUILD_RESULT_PATH
 
         if (-not $?) {
           throw "PR dashboard generation failed."
@@ -436,48 +554,19 @@ runs:
           Pop-Location
         }
 
-    - name: Build backend repository
-      shell: powershell
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        Push-Location "${{ inputs.repository-root }}"
-
-        try {
-          # CI-only local placeholders.
-          # `prisma generate` needs valid datasource values to load prisma.config.ts,
-          # but it does not connect to the database.
-          $env:APP_ENV = "local"
-          $env:DATABASE_URL = "postgresql://ci:ci@127.0.0.1:5432/gr8booksneo_dev?schema=public"
-          $env:DIRECT_URL = "postgresql://ci:ci@127.0.0.1:5432/gr8booksneo_dev?schema=public"
-
-          Write-Host "Installing backend repository dependencies..."
-          npm ci
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Backend npm ci failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "Running backend production build..."
-          npm run build
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Backend npm run build failed with exit code $LASTEXITCODE."
-          }
-
-          Write-Host "Backend build passed."
-        }
-        finally {
-          Pop-Location
-        }
-
     - name: Enforce final QA result
       if: always()
       shell: pwsh
       env:
         OVERALL_STATUS: ${{ steps.summary.outputs.overall_status }}
+        BUILD_OUTCOME: ${{ steps.build.outcome }}
       run: |
         $status = $env:OVERALL_STATUS
+
+        if ($env:BUILD_OUTCOME -eq "failure") {
+          Write-Error "Backend production build failed. Review the Production Build blocker in the QA dashboard."
+          exit 1
+        }
 
         if ([string]::IsNullOrWhiteSpace($status)) {
           Write-Error "The QA summary did not provide an overall status."
