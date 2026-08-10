@@ -187,15 +187,19 @@ runs:
           -Level "INFO" `
           -Message "Comparing $env:BASE_REFERENCE...$env:HEAD_REFERENCE"
 
-        $changedFiles = Get-QaChangedFiles `
-          -RepositoryRoot $env:REPOSITORY_ROOT `
-          -BaseReference $env:BASE_REFERENCE `
-          -HeadReference $env:HEAD_REFERENCE
+        $changedFiles = @(
+          Get-QaChangedFiles `
+            -RepositoryRoot $env:REPOSITORY_ROOT `
+            -BaseReference $env:BASE_REFERENCE `
+            -HeadReference $env:HEAD_REFERENCE
+        )
+
+        $changedFileCount = @($changedFiles).Count
 
         $changedFilesDocument = [ordered]@{
           baseReference = $env:BASE_REFERENCE
           headReference = $env:HEAD_REFERENCE
-          count = $changedFiles.Count
+          count = $changedFileCount
           files = @($changedFiles)
         }
 
@@ -204,11 +208,11 @@ runs:
           -Path $env:CHANGED_FILES_PATH |
           Out-Null
 
-        "count=$($changedFiles.Count)" >> $env:GITHUB_OUTPUT
+        "count=$changedFileCount" >> $env:GITHUB_OUTPUT
 
         Write-QaLog `
           -Level "SUCCESS" `
-          -Message "$($changedFiles.Count) changed file(s) detected."
+          -Message "$changedFileCount changed file(s) detected."
 
         foreach ($file in $changedFiles) {
           Write-Host " - $file"
