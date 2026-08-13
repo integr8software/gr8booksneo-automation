@@ -655,6 +655,36 @@ runs:
 
         Write-Host "CRM QA ticket payload: $outputPath"
 
+    - name: Publish QA tickets to CRM
+      shell: pwsh
+      env:
+        CRM_DRY_RUN: "false"
+        CRM_MAX_TICKETS: "200"
+        AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
+        REPORTS_DIRECTORY: ${{ steps.paths.outputs.reports-directory }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $ticketPath = Join-Path $env:REPORTS_DIRECTORY "crm\crm-tickets.json"
+        $scriptPath = Join-Path $env:AUTOMATION_ROOT "scripts\crm\publish-crm-tickets.mjs"
+
+        if (-not (Test-Path -LiteralPath $ticketPath -PathType Leaf)) {
+          throw "CRM ticket payload was not found: $ticketPath"
+        }
+
+        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+          throw "CRM ticket publisher was not found: $scriptPath"
+        }
+
+        Write-Host "Publishing CRM QA tickets..."
+        node $scriptPath $ticketPath
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "CRM QA ticket publishing failed with exit code $LASTEXITCODE."
+        }
+
+        Write-Host "CRM QA ticket publishing completed."
+
     - name: Capture frontend QA dashboard
       if: always()
       shell: pwsh
