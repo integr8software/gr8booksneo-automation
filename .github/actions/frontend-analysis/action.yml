@@ -187,7 +187,7 @@ runs:
     - name: Check branch freshness
       id: branch_freshness
       continue-on-error: true
-      shell: powershell
+      shell: pwsh
       env:
         REPOSITORY_ROOT: ${{ inputs.repository-root }}
         BASE_REFERENCE: ${{ inputs.base-reference }}
@@ -249,7 +249,7 @@ runs:
             Write-Host "The PR branch contains the latest base commit."
 
             "### Branch Freshness" >> $env:GITHUB_STEP_SUMMARY
-            "✅ **Up to date** — the PR branch contains the latest base commit." >> $env:GITHUB_STEP_SUMMARY
+            "**Up to date** - the PR branch contains the latest base commit." >> $env:GITHUB_STEP_SUMMARY
 
             exit 0
           }
@@ -257,7 +257,7 @@ runs:
           "status=outdated" >> $env:GITHUB_OUTPUT
 
           "### Branch Freshness" >> $env:GITHUB_STEP_SUMMARY
-          "❌ **Outdated branch** — this PR is $behindCount commit(s) behind its base branch." >> $env:GITHUB_STEP_SUMMARY
+          "**Outdated branch** - this PR is $behindCount commit(s) behind its base branch." >> $env:GITHUB_STEP_SUMMARY
           "" >> $env:GITHUB_STEP_SUMMARY
           "Update the feature branch before merging:" >> $env:GITHUB_STEP_SUMMARY
           "" >> $env:GITHUB_STEP_SUMMARY
@@ -275,7 +275,7 @@ runs:
         }
 
     - name: Install frontend QA dependencies
-      shell: powershell
+      shell: pwsh
       env:
         AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
       run: |
@@ -290,10 +290,22 @@ runs:
             throw "npm ci failed with exit code $LASTEXITCODE."
           }
 
-          npx playwright install chromium
+          $playwrightCli = Join-Path $env:AUTOMATION_ROOT "node_modules\playwright\cli.js"
+
+          if (-not (Test-Path -LiteralPath $playwrightCli -PathType Leaf)) {
+            throw "Local Playwright CLI was not found: $playwrightCli"
+          }
+
+          node $playwrightCli install chromium
 
           if ($LASTEXITCODE -ne 0) {
             throw "Playwright Chromium installation failed with exit code $LASTEXITCODE."
+          }
+
+          node -e "import('playwright').then(({chromium}) => { const fs = require('node:fs'); const p = chromium.executablePath(); console.log('Chromium executable:', p); if (!fs.existsSync(p)) process.exit(1); })"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright Chromium executable verification failed."
           }
         }
         finally {
@@ -595,7 +607,7 @@ runs:
     - name: Generate CRM QA ticket payload
       if: always()
       continue-on-error: true
-      shell: powershell
+      shell: pwsh
       env:
         AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
         REPOSITORY_ROOT: ${{ steps.paths.outputs.repository-root }}
@@ -645,7 +657,7 @@ runs:
 
     - name: Capture frontend QA dashboard
       if: always()
-      shell: powershell
+      shell: pwsh
       env:
         AUTOMATION_ROOT: ${{ steps.paths.outputs.automation-root }}
         REPORT_HTML: ${{ steps.paths.outputs.report-html }}

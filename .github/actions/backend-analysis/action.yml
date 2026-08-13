@@ -182,7 +182,7 @@ runs:
             Write-Host "The PR branch contains the latest base commit."
 
             "### Branch Freshness" >> $env:GITHUB_STEP_SUMMARY
-            "✅ **Up to date** — the PR branch contains the latest base commit." >> $env:GITHUB_STEP_SUMMARY
+            "**Up to date** - the PR branch contains the latest base commit." >> $env:GITHUB_STEP_SUMMARY
 
             exit 0
           }
@@ -190,7 +190,7 @@ runs:
           "status=outdated" >> $env:GITHUB_OUTPUT
 
           "### Branch Freshness" >> $env:GITHUB_STEP_SUMMARY
-          "❌ **Outdated branch** — this PR is $behindCount commit(s) behind its base branch." >> $env:GITHUB_STEP_SUMMARY
+          "**Outdated branch** - this PR is $behindCount commit(s) behind its base branch." >> $env:GITHUB_STEP_SUMMARY
           "" >> $env:GITHUB_STEP_SUMMARY
           "Update the feature branch before merging:" >> $env:GITHUB_STEP_SUMMARY
           "" >> $env:GITHUB_STEP_SUMMARY
@@ -649,9 +649,7 @@ runs:
           throw "PR dashboard generation failed."
         }
 
-        exit 0  
-
-        exit $LASTEXITCODE
+        exit 0
 
     - name: Install Playwright Chromium
       if: always()
@@ -663,7 +661,23 @@ runs:
         Push-Location $env:TOOLKIT_ROOT
 
         try {
-          npx playwright install chromium
+          $playwrightCli = Join-Path $env:TOOLKIT_ROOT "node_modules\playwright\cli.js"
+
+          if (-not (Test-Path -LiteralPath $playwrightCli -PathType Leaf)) {
+            throw "Local Playwright CLI was not found: $playwrightCli"
+          }
+
+          node $playwrightCli install chromium
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright Chromium installation failed with exit code $LASTEXITCODE."
+          }
+
+          node -e "import('playwright').then(({chromium}) => { const fs = require('node:fs'); const p = chromium.executablePath(); console.log('Chromium executable:', p); if (!fs.existsSync(p)) process.exit(1); })"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Playwright Chromium executable verification failed."
+          }
         }
         finally {
           Pop-Location
