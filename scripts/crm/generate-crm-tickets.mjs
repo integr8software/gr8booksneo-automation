@@ -1,220 +1,586 @@
 import fs from "node:fs";
 import path from "node:path";
-import { chromium } from "playwright";
+import { execFileSync } from "node:child_process";
 
-function requiredEnv(name) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing environment variable: ${name}`);
-  return value;
+function resolveJsonFile(filePath, label, candidates = []) {
+  if (!filePath) {
+    throw new Error(`${label} path is empty.`);
+  }
+
+  const resolved = path.resolve(filePath);
+
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`${label} path does not exist: ${resolved}`);
+  }
+
+  const stat = fs.statSync(resolved);
+
+  if (stat.isFile()) {
+    return resolved;
+  }
+
+  for (const candidate of candidates) {
+    const nested = path.join(resolved, candidate);
+
+    if (
+      fs.existsSync(nested) &&
+      fs.statSync(nested).isFile()
+    ) {
+      return nested;
+    }
+  }
+
+  throw new Error(
+    `${label} path points to a directory instead of a JSON file: ${resolved}`,
+  );
 }
 
 function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const raw = fs.readFileSync(filePath, "utf8");
+  const withoutBom = raw.replace(/^\uFEFF/, "");
+  return JSON.parse(withoutBom);
 }
 
-function manilaDate() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-
-  const map = Object.fromEntries(
-    parts.filter((p) => p.type !== "literal").map((p) => [p.type, p.value]),
-  );
-
-  return `${map.year}-${map.month}-${map.day}`;
-}
-
-async function chooseAutocomplete(page, input, value) {
-  await input.fill("");
-  await input.fill(value);
-  await page.waitForTimeout(700);
-
-  const item = page.locator(".ui-autocomplete:visible .ui-menu-item").first();
-  await item.waitFor({ state: "visible", timeout: 15000 });
-  await item.click();
-}
-
-async function ticketRows(page) {
-  return page.locator("tr").filter({
-    has: page.locator('[id$="txtConcern_Entry"]'),
-  });
-}
-
-async function addRow(page, expectedCount) {
-  const addButton = page.getByRole("button", { name: /add entry/i }).first();
-
-  if ((await addButton.count()) === 0) {
-    throw new Error("Add Entry button was not found.");
-  }
-
-  await addButton.click();
-
-  await page.waitForFunction(
-    ({ expectedCount }) => {
-      return document.querySelectorAll('[id$="txtConcern_Entry"]').length >= expectedCount;
+function git(repositoryRoot, args) {
+  return execFileSync(
+    "git",
+    ["-C", repositoryRoot, ...args],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 1024 * 1024 * 100,
     },
-    { expectedCount },
-    { timeout: 20000 },
+  ).trim();
+}
+
+function normalizePath(value) {
+  return String(value ?? "").replaceAll("\\", "/");
+}
+
+function prettyName(value) {
+  return String(value ?? "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function getModuleName(filePath) {
+  const file = normalizePath(filePath);
+
+  const patterns = [
+    /app\/\(modules\)\/[^/]+\/([^/]+)/i,
+    /app\/modules\/[^/]+\/([^/]+)/i,
+    /app\/src\/ui\/modules\/[^/]+\/([^/]+)/i,
+    /src\/modules\/([^/]+)/i,
+    /src\/services\/([^/]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = file.match(pattern);
+
+    if (match?.[1]) {
+      return prettyName(match[1]);
+    }
+  }
+
+  const segments = file.split("/").filter(Boolean);
+
+  if (segments.length >= 2) {
+    return prettyName(segments[segments.length - 2]);
+  }
+
+  return prettyName(path.basename(file));
+}
+
+function classifyFile(filePath) {
+  const file = normalizePath(filePath).toLowerCase();
+
+  if (/\/add\/page\.(tsx|jsx)$/.test(file)) {
+    return "Add page";
+  }
+
+  if (/\/edit\/.*\/page\.(tsx|jsx)$/.test(file)) {
+    return "Edit page";
+  }
+
+  if (/\/view\/.*\/page\.(tsx|jsx)$/.test(file)) {
+    return "View page";
+  }
+
+  if (/\/page\.(tsx|jsx)$/.test(file)) {
+    return "page";
+  }
+
+  if (/\.spec\.(ts|tsx|js|jsx)$/.test(file)) {
+    return "test";
+  }
+
+  if (file.includes("controller.")) {
+    return "controller";
+  }
+
+  if (file.includes("service.")) {
+    return "service";
+  }
+
+  if (
+    file.includes("/dto/") ||
+    file.includes(".dto.")
+  ) {
+    return "DTO";
+  }
+
+  if (
+    file.includes("/types/") ||
+    file.includes("types.")
+  ) {
+    return "types";
+  }
+
+  if (file.endsWith("schema.prisma")) {
+    return "database schema";
+  }
+
+  return "file";
+}
+
+function shorten(value, maximum = 100) {
+  const normalized = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalized.length <= maximum) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maximum - 3)}...`;
+}
+
+function usefulDiffLines(diff, prefix) {
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (!line.startsWith(prefix)) {
+        return false;
+      }
+
+      if (
+        line.startsWith("+++") ||
+        line.startsWith("---")
+      ) {
+        return false;
+      }
+
+      const text = line.slice(1).trim();
+
+      if (!text) {
+        return false;
+      }
+
+      if (
+        text.startsWith("import ") ||
+        text === "{" ||
+        text === "}" ||
+        text === ");" ||
+        text === "};"
+      ) {
+        return false;
+      }
+
+      return true;
+    })
+    .map((line) => line.slice(1).trim());
+}
+
+function quotedValue(line) {
+  const match = String(line).match(/["'`](.*?)["'`]/);
+  return match?.[1] || null;
+}
+
+function getDiff(repositoryRoot, baseSha, headSha, file) {
+  try {
+    return git(repositoryRoot, [
+      "diff",
+      "--unified=2",
+      baseSha,
+      headSha,
+      "--",
+      file,
+    ]);
+  } catch {
+    return "";
+  }
+}
+
+function buildFileConcern({
+  file,
+  diff,
+}) {
+  const area = classifyFile(file);
+
+  const removed = usefulDiffLines(diff, "-");
+  const added = usefulDiffLines(diff, "+");
+
+  if (removed.length === 1 && added.length === 1) {
+    const oldQuoted = quotedValue(removed[0]);
+    const newQuoted = quotedValue(added[0]);
+
+    if (
+      oldQuoted &&
+      newQuoted &&
+      oldQuoted !== newQuoted
+    ) {
+      return (
+        `QA Checked - Updated ${area} from ` +
+        `"${shorten(oldQuoted, 70)}" to ` +
+        `"${shorten(newQuoted, 70)}".`
+      );
+    }
+  }
+
+  if (added.length > 0 && removed.length === 0) {
+    return `QA Checked - Reviewed added ${area} changes.`;
+  }
+
+  if (removed.length > 0 && added.length === 0) {
+    return `QA Checked - Reviewed removed ${area} changes.`;
+  }
+
+  return `QA Checked - Reviewed ${area} changes.`;
+}
+
+function normalizeFindingLabel(detail, result) {
+  const severity = String(detail.severity ?? "").toUpperCase();
+
+  if (
+    result.blocking === true ||
+    ["CRITICAL", "HIGH"].includes(severity)
+  ) {
+    return "QA Blocker";
+  }
+
+  return "QA Warning";
+}
+
+function buildFindingConcern(detail, result) {
+  const label = normalizeFindingLabel(detail, result);
+  const message = shorten(
+    detail.message || result.summary || "Quality Gate finding",
+    160,
   );
+
+  return `${label} - ${message}`;
 }
 
-async function fillTicketRow(page, row, ticket, fixed) {
-  const type = row.locator('[id$="ddlType"]');
-  if ((await type.count()) > 0) {
-    await type.selectOption({ label: fixed.type }).catch(async () => {
-      await type.selectOption(fixed.type);
-    });
+function loadAnalyzerResults(resultsSource) {
+  if (!resultsSource || !fs.existsSync(resultsSource)) {
+    return [];
   }
 
-  const client = row.locator('[id$="txtClientName_Entry"]');
-  await chooseAutocomplete(page, client, fixed.clientName);
+  const stat = fs.statSync(resultsSource);
 
-  await row.locator('[id$="txtModule_Entry"]').fill(ticket.module || "QA");
-  await row.locator('[id$="txtConcern_Entry"]').fill(ticket.concern);
+  if (stat.isDirectory()) {
+    const files = [
+      "semgrep-result.json",
+      "knip-result.json",
+      "madge-result.json",
+    ];
 
-  const inCharge = row.locator('[id$="txtInchargeName_Entry"]');
-  await chooseAutocomplete(page, inCharge, fixed.inChargeName);
+    const results = [];
 
-  const startDate = row.locator('[id$="txtStartDate_Entry"]');
-  if ((await startDate.count()) > 0) await startDate.fill(fixed.date);
+    for (const fileName of files) {
+      const filePath = path.join(resultsSource, fileName);
 
-  const targetDate = row.locator('[id$="txtTargetDate_Entry"]');
-  if ((await targetDate.count()) > 0) await targetDate.fill(fixed.date);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
 
-  const systemName = row.locator('[id$="txtSystemName_Entry"]');
-  await chooseAutocomplete(page, systemName, fixed.systemName);
-
-  const status = row.locator('[id$="ddlStatus"]');
-  if ((await status.count()) > 0) {
-    await status.selectOption({ label: fixed.status }).catch(async () => {
-      await status.selectOption(fixed.status);
-    });
-  }
-
-  const remoteId = row.locator('[id$="txtRemoteID_Entry"]');
-  if ((await remoteId.count()) > 0) {
-    const source = ticket.file || ticket.ruleId || ticket.kind || "ticket";
-    await remoteId.fill(
-      `${fixed.repository}|${fixed.headSha}|${ticket.kind}|${source}`.slice(0, 190),
-    );
-  }
-}
-
-const inputFile = process.argv[2];
-if (!inputFile) {
-  throw new Error("Usage: node publish-crm-tickets.mjs <crm-tickets.json>");
-}
-
-const payload = readJson(inputFile);
-const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
-
-if (tickets.length === 0) {
-  console.log("No CRM tickets to create.");
-  process.exit(0);
-}
-
-const maxTickets = Number(process.env.CRM_MAX_TICKETS || "200");
-if (tickets.length > maxTickets) {
-  throw new Error(
-    `Refusing to submit ${tickets.length} tickets because CRM_MAX_TICKETS=${maxTickets}.`,
-  );
-}
-
-const crmBaseUrl = requiredEnv("CRM_BASE_URL").replace(/\/+$/, "");
-const crmUsername = requiredEnv("CRM_USERNAME");
-const crmPassword = requiredEnv("CRM_PASSWORD");
-const dryRun = String(process.env.CRM_DRY_RUN || "true").toLowerCase() !== "false";
-
-const fixed = {
-  type: "Task",
-  clientName: "Integr8 Software Solutions Inc.",
-  inChargeName: "Menciano, Gil B.",
-  systemName: "Ticket/Task Testing",
-  status: "On-Going",
-  date: manilaDate(),
-  repository: payload.source?.repository || "",
-  headSha: payload.source?.headSha || "",
-};
-
-const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext();
-
-try {
-  const page = await context.newPage();
-
-  await page.goto(`${crmBaseUrl}/pages/Login.aspx`, {
-    waitUntil: "domcontentloaded",
-  });
-
-  await page.locator('[id$="txtEmail"]').fill(crmUsername);
-  await page.locator('[id$="txtPassword"]').fill(crmPassword);
-
-  await Promise.all([
-    page.waitForLoadState("domcontentloaded"),
-    page.locator('[id$="btnLogin"]').click(),
-  ]);
-
-  if (page.url().toLowerCase().includes("login.aspx")) {
-    throw new Error("CRM login failed.");
-  }
-
-  await page.goto(`${crmBaseUrl}/pages/helpdesk.aspx`, {
-    waitUntil: "domcontentloaded",
-  });
-
-  let rows = await ticketRows(page);
-  let rowCount = await rows.count();
-
-  if (rowCount === 0) {
-    throw new Error("No Help Desk entry row was found.");
-  }
-
-  for (let i = 0; i < tickets.length; i += 1) {
-    rows = await ticketRows(page);
-    rowCount = await rows.count();
-
-    while (rowCount <= i) {
-      await addRow(page, rowCount + 1);
-      rows = await ticketRows(page);
-      rowCount = await rows.count();
+      results.push(readJson(filePath));
     }
 
-    console.log(`[${i + 1}/${tickets.length}] ${tickets[i].module}: ${tickets[i].concern}`);
-    await fillTicketRow(page, rows.nth(i), tickets[i], fixed);
+    return results;
   }
 
-  const proofDir = path.join(path.dirname(inputFile), "proof");
-  fs.mkdirSync(proofDir, { recursive: true });
+  const report = readJson(resultsSource);
 
-  const proofPath = path.join(
-    proofDir,
-    `${(fixed.headSha || "crm").slice(0, 12)}-${dryRun ? "dry-run" : "before-submit"}.png`,
-  );
+  // Frontend reports may keep findings at the top level or under detector/rule
+  // sections. Collect all finding-like arrays and deduplicate them.
+  const collected = [];
 
-  await page.screenshot({
-    path: proofPath,
-    fullPage: true,
+  function visit(value) {
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item);
+      }
+      return;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        (key === "findings" || key === "details") &&
+        Array.isArray(child)
+      ) {
+        for (const finding of child) {
+          if (finding && typeof finding === "object") {
+            collected.push(finding);
+          }
+        }
+      } else {
+        visit(child);
+      }
+    }
+  }
+
+  visit(report);
+
+  const seen = new Set();
+  const findings = collected.filter((finding) => {
+    const signature = JSON.stringify([
+      finding.severity || finding.level || "",
+      finding.message || finding.title || finding.description || "",
+      finding.file || finding.filePath || finding.path || "",
+      finding.line ?? finding.lineNumber ?? null,
+      finding.ruleId || finding.rule || finding.id || "",
+    ]);
+
+    if (seen.has(signature)) {
+      return false;
+    }
+
+    seen.add(signature);
+    return true;
   });
 
-  console.log(`Prepared ${tickets.length} CRM ticket row(s).`);
-  console.log(`Proof: ${proofPath}`);
-
-  if (dryRun) {
-    console.log("CRM_DRY_RUN=true — no tickets were submitted.");
-    process.exit(0);
-  }
-
-  const save = page.locator('[id$="btnSave"]').first();
-  await save.waitFor({ state: "visible", timeout: 15000 });
-  await save.click();
-
-  await page.waitForTimeout(3000);
-
-  console.log(`Submitted ${tickets.length} CRM ticket(s).`);
-} finally {
-  await context.close();
-  await browser.close();
+  return [{
+    tool: report.tool || "Frontend QA",
+    category: "FRONTEND_QUALITY",
+    blocking: false,
+    summary:
+      report.decision?.label ||
+      report.summary ||
+      "Frontend QA finding",
+    details: findings.map((finding) => ({
+      severity: finding.severity || finding.level || "",
+      message:
+        finding.message ||
+        finding.title ||
+        finding.description ||
+        "Frontend QA finding",
+      file:
+        finding.file ||
+        finding.filePath ||
+        finding.path ||
+        "",
+      line:
+        finding.line ??
+        finding.lineNumber ??
+        null,
+      ruleId:
+        finding.ruleId ||
+        finding.rule ||
+        finding.id ||
+        "",
+    })),
+  }];
 }
+
+const [
+  repositoryRoot,
+  changedFilesPath,
+  resultsSource,
+  outputPath,
+  baseSha,
+  headSha,
+  repositoryName = "",
+  branchName = "",
+] = process.argv.slice(2);
+
+if (
+  !repositoryRoot ||
+  !changedFilesPath ||
+  !resultsSource ||
+  !outputPath ||
+  !baseSha ||
+  !headSha
+) {
+  console.error(`
+Usage:
+
+node generate-crm-tickets.mjs ^
+  <repositoryRoot> ^
+  <changedFilesPath> ^
+  <resultsSource> ^
+  <outputPath> ^
+  <baseSha> ^
+  <headSha> ^
+  <repositoryName> ^
+  <branchName>
+`);
+
+  process.exit(1);
+}
+
+console.log("CRM generator inputs:");
+console.log(`  repositoryRoot   : ${repositoryRoot}`);
+console.log(`  changedFilesPath : ${changedFilesPath}`);
+console.log(`  resultsSource    : ${resultsSource}`);
+console.log(`  outputPath       : ${outputPath}`);
+console.log(`  baseSha          : ${baseSha}`);
+console.log(`  headSha          : ${headSha}`);
+
+const resolvedChangedFilesPath = resolveJsonFile(
+  changedFilesPath,
+  "Changed-files",
+  [
+    "changed-files.json",
+    path.join("raw", "changed-files.json"),
+  ],
+);
+
+let resolvedResultsSource = resultsSource;
+
+if (
+  resultsSource &&
+  fs.existsSync(resultsSource) &&
+  fs.statSync(resultsSource).isDirectory()
+) {
+  // Backend intentionally supplies the results directory.
+  resolvedResultsSource = resultsSource;
+} else {
+  resolvedResultsSource = resolveJsonFile(
+    resultsSource,
+    "QA results",
+    [
+      "frontend-quality-results.json",
+      "quality-results.json",
+      "QA-Report.json",
+    ],
+  );
+}
+
+const changedFilesDocument = readJson(
+  resolvedChangedFilesPath,
+);
+
+const changedFiles = Array.isArray(changedFilesDocument)
+  ? changedFilesDocument
+  : Array.isArray(changedFilesDocument.files)
+    ? changedFilesDocument.files
+    : [];
+
+const analyzerResults = loadAnalyzerResults(
+  resolvedResultsSource,
+);
+
+const tickets = [];
+
+// ---------------------------------------------------------
+// One QA Checked ticket per changed file/card
+// ---------------------------------------------------------
+
+for (const fileValue of changedFiles) {
+  const file = normalizePath(fileValue);
+
+  const diff = getDiff(
+    repositoryRoot,
+    baseSha,
+    headSha,
+    file,
+  );
+
+  tickets.push({
+    kind: "file-change",
+    module: getModuleName(file),
+    concern: buildFileConcern({
+      file,
+      diff,
+    }),
+    file,
+  });
+}
+
+// ---------------------------------------------------------
+// Additional ticket per analyzer finding
+// ---------------------------------------------------------
+
+for (const result of analyzerResults) {
+  const details = Array.isArray(result.details)
+    ? result.details
+    : [];
+
+  for (const detail of details) {
+    const file = normalizePath(detail.file ?? "");
+
+    tickets.push({
+      kind: "finding",
+      tool: result.tool,
+      severity: detail.severity ?? "",
+      module: file
+        ? getModuleName(file)
+        : prettyName(result.category),
+      concern: buildFindingConcern(detail, result),
+      file,
+      line: detail.line ?? null,
+      ruleId: detail.ruleId ?? "",
+    });
+  }
+}
+
+const fileTicketCount = tickets.filter(
+  (ticket) => ticket.kind === "file-change",
+).length;
+
+const findingTicketCount = tickets.filter(
+  (ticket) => ticket.kind === "finding",
+).length;
+
+const payload = {
+  generatedAt: new Date().toISOString(),
+
+  source: {
+    repository: repositoryName,
+    branch: branchName,
+    baseSha,
+    headSha,
+  },
+
+  summary: {
+    changedFiles: changedFiles.length,
+    fileTickets: fileTicketCount,
+    findingTickets: findingTicketCount,
+    totalTickets: tickets.length,
+  },
+
+  tickets,
+};
+
+fs.mkdirSync(
+  path.dirname(outputPath),
+  {
+    recursive: true,
+  },
+);
+
+fs.writeFileSync(
+  outputPath,
+  `${JSON.stringify(payload, null, 2)}\n`,
+  "utf8",
+);
+
+console.log("");
+console.log("========================================");
+console.log("CRM QA Ticket Generator");
+console.log("========================================");
+console.log(`Changed files  : ${changedFiles.length}`);
+console.log(`QA Checked     : ${fileTicketCount}`);
+console.log(`QA findings    : ${findingTicketCount}`);
+console.log(`Total tickets  : ${tickets.length}`);
+console.log(`Output         : ${outputPath}`);
+console.log("========================================");
