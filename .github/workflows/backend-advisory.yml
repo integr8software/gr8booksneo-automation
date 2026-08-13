@@ -107,7 +107,7 @@ jobs:
           npx playwright install chromium
 
       - name: Publish QA tickets to CRM
-        if: github.event_name == 'push'
+        if: github.event_name == 'pull_request'
         shell: pwsh
         env:
           CRM_DRY_RUN: "false"
