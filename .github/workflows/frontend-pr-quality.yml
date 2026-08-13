@@ -1,6 +1,15 @@
 name: Frontend PR Quality
 
 on:
+  push:
+    branches-ignore:
+      - develop
+      - master
+
+  pull_request:
+    branches:
+      - develop
+
   workflow_call:
     inputs:
       maximum-findings-per-rule:
@@ -20,6 +29,16 @@ on:
         required: false
         type: boolean
         default: false
+
+    secrets:
+      QA_AUTOMATION_TOKEN:
+        required: true
+      CRM_BASE_URL:
+        required: true
+      CRM_USERNAME:
+        required: true
+      CRM_PASSWORD:
+        required: true
 
   workflow_dispatch:
     inputs:
@@ -91,9 +110,29 @@ jobs:
             $baseReference = "${{ github.event.pull_request.base.sha }}"
             $headReference = "${{ github.event.pull_request.head.sha }}"
           }
+          elseif ("${{ github.event_name }}" -eq "push") {
+            $baseReference = "${{ github.event.before }}"
+            $headReference = "${{ github.sha }}"
+
+            if ([string]::IsNullOrWhiteSpace($baseReference) -or $baseReference -match '^0+$') {
+              git fetch --no-tags origin develop
+              if ($LASTEXITCODE -ne 0) {
+                throw "Unable to fetch origin/develop."
+              }
+
+              $baseReference = git merge-base origin/develop $headReference
+              if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($baseReference)) {
+                throw "Unable to resolve first-push comparison base."
+              }
+            }
+          }
           else {
-            $baseReference = "origin/develop"
-            $headReference = "HEAD"
+            $headReference = git rev-parse HEAD
+            git fetch --no-tags origin develop
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to fetch origin/develop."
+            }
+            $baseReference = git merge-base origin/develop $headReference
           }
 
           "base-reference=$baseReference" >> $env:GITHUB_OUTPUT
@@ -114,6 +153,31 @@ jobs:
           fail-on-blockers: ${{ inputs.fail-on-blockers }}
           fail-on-warnings: ${{ inputs.fail-on-warnings }}
 
+
+      - name: Publish QA tickets to CRM
+        if: github.event_name == 'push'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}\qa-automation
+        env:
+          CRM_BASE_URL: ${{ secrets.CRM_BASE_URL }}
+          CRM_USERNAME: ${{ secrets.CRM_USERNAME }}
+          CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
+          CRM_DRY_RUN: "false"
+          CRM_MAX_TICKETS: "200"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $ticketsPath = Join-Path "${{ github.workspace }}" "reports\crm\crm-tickets.json"
+          $publisher = Join-Path "${{ github.workspace }}" "qa-automation\scripts\crm\publish-crm-tickets.mjs"
+
+          if (-not (Test-Path -LiteralPath $ticketsPath -PathType Leaf)) {
+            throw "CRM ticket payload not found: $ticketsPath"
+          }
+
+          node $publisher $ticketsPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "CRM publishing failed with exit code $LASTEXITCODE."
+          }
 
       - name: Upload frontend QA reports
         if: always()

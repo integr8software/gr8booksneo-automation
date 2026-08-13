@@ -1,7 +1,23 @@
 name: Backend PR Quality
 
 on:
+  push:
+    branches-ignore:
+      - develop
+      - master
+
+  pull_request:
+    branches:
+      - develop
+
   workflow_call:
+    secrets:
+      CRM_BASE_URL:
+        required: true
+      CRM_USERNAME:
+        required: true
+      CRM_PASSWORD:
+        required: true
 
   workflow_dispatch:
 
@@ -29,14 +45,97 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Resolve QA references
+        id: refs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $baseReference = "${{ github.event.pull_request.base.sha }}"
+            $headReference = "${{ github.event.pull_request.head.sha }}"
+          }
+          elseif ("${{ github.event_name }}" -eq "push") {
+            $baseReference = "${{ github.event.before }}"
+            $headReference = "${{ github.sha }}"
+
+            if ([string]::IsNullOrWhiteSpace($baseReference) -or $baseReference -match '^0+$') {
+              git fetch --no-tags origin develop
+              if ($LASTEXITCODE -ne 0) {
+                throw "Unable to fetch origin/develop."
+              }
+
+              $baseReference = git merge-base origin/develop $headReference
+              if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($baseReference)) {
+                throw "Unable to resolve first-push comparison base."
+              }
+            }
+          }
+          else {
+            $headReference = git rev-parse HEAD
+            git fetch --no-tags origin develop
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to fetch origin/develop."
+            }
+            $baseReference = git merge-base origin/develop $headReference
+          }
+
+          "base-reference=$baseReference" >> $env:GITHUB_OUTPUT
+          "head-reference=$headReference" >> $env:GITHUB_OUTPUT
+
+          Write-Host "QA base: $baseReference"
+          Write-Host "QA head: $headReference"
+
       - name: Run backend PR quality analysis
         uses: integr8software/gr8booksneo-automation/.github/actions/backend-analysis@develop
         with:
           repository-root: ${{ github.workspace }}
           tsconfig-path: tsconfig.json
-          base-reference: ${{ github.event.pull_request.base.sha }}
-          head-reference: ${{ github.event.pull_request.head.sha }}
+          base-reference: ${{ steps.refs.outputs.base-reference }}
+          head-reference: ${{ steps.refs.outputs.head-reference }}
           maximum-findings-per-tool: "10"
+
+      - name: Checkout CRM automation
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          repository: integr8software/gr8booksneo-automation
+          ref: develop
+          path: qa-crm-automation
+          fetch-depth: 1
+
+      - name: Install CRM publisher dependencies
+        if: github.event_name == 'push'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}\qa-crm-automation
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm ci
+          npx playwright install chromium
+
+      - name: Publish QA tickets to CRM
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          CRM_BASE_URL: ${{ secrets.CRM_BASE_URL }}
+          CRM_USERNAME: ${{ secrets.CRM_USERNAME }}
+          CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
+          CRM_DRY_RUN: "false"
+          CRM_MAX_TICKETS: "200"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $ticketsPath = Join-Path "${{ github.workspace }}" "reports\crm\crm-tickets.json"
+          $publisher = Join-Path "${{ github.workspace }}" "qa-crm-automation\scripts\crm\publish-crm-tickets.mjs"
+
+          if (-not (Test-Path -LiteralPath $ticketsPath -PathType Leaf)) {
+            throw "CRM ticket payload not found: $ticketsPath"
+          }
+
+          node $publisher $ticketsPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "CRM publishing failed with exit code $LASTEXITCODE."
+          }
 
       - name: Upload backend PR quality reports
         if: always()

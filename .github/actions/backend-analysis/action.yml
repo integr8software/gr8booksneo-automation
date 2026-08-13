@@ -117,6 +117,96 @@ runs:
         Write-Host "Backend repository root: $repositoryRoot"
         Write-Host "Reports root: $reportsRoot"
 
+    - name: Check branch freshness
+      id: branch_freshness
+      continue-on-error: true
+      shell: pwsh
+      env:
+        REPOSITORY_ROOT: ${{ inputs.repository-root }}
+        BASE_REFERENCE: ${{ inputs.base-reference }}
+        HEAD_REFERENCE: ${{ inputs.head-reference }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Push-Location $env:REPOSITORY_ROOT
+
+        try {
+          $baseReference = $env:BASE_REFERENCE
+          $headReference = $env:HEAD_REFERENCE
+
+          if (
+            [string]::IsNullOrWhiteSpace($baseReference) -or
+            [string]::IsNullOrWhiteSpace($headReference)
+          ) {
+            throw "Branch freshness requires both base and head references."
+          }
+
+          git cat-file -e "$baseReference^{commit}" 2>$null
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Fetching missing base commit..."
+            git fetch --no-tags origin $baseReference
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to fetch the PR base commit for branch freshness validation."
+            }
+          }
+
+          git cat-file -e "$headReference^{commit}" 2>$null
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Fetching missing head commit..."
+            git fetch --no-tags origin $headReference
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to fetch the PR head commit for branch freshness validation."
+            }
+          }
+
+          git merge-base --is-ancestor $baseReference $headReference
+          $isUpToDate = ($LASTEXITCODE -eq 0)
+
+          $behindCountText = git rev-list --count "$headReference..$baseReference"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to calculate how far the branch is behind its PR base."
+          }
+
+          $behindCount = [int]$behindCountText.Trim()
+          "behind-count=$behindCount" >> $env:GITHUB_OUTPUT
+
+          if ($isUpToDate) {
+            "status=up-to-date" >> $env:GITHUB_OUTPUT
+
+            Write-Host "Branch freshness: PASSED"
+            Write-Host "The PR branch contains the latest base commit."
+
+            "### Branch Freshness" >> $env:GITHUB_STEP_SUMMARY
+            "✅ **Up to date** — the PR branch contains the latest base commit." >> $env:GITHUB_STEP_SUMMARY
+
+            exit 0
+          }
+
+          "status=outdated" >> $env:GITHUB_OUTPUT
+
+          "### Branch Freshness" >> $env:GITHUB_STEP_SUMMARY
+          "❌ **Outdated branch** — this PR is $behindCount commit(s) behind its base branch." >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "Update the feature branch before merging:" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          '```powershell' >> $env:GITHUB_STEP_SUMMARY
+          "git fetch origin" >> $env:GITHUB_STEP_SUMMARY
+          "git merge origin/develop" >> $env:GITHUB_STEP_SUMMARY
+          "git push" >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+
+          Write-Error "Branch is outdated: $behindCount commit(s) behind the PR base. Merge the latest develop into the feature branch, then push again."
+          exit 1
+        }
+        finally {
+          Pop-Location
+        }
+
     - name: Install QA toolkit dependencies
       shell: pwsh
       env:
@@ -351,6 +441,49 @@ runs:
           -MaximumDisplayedFindingsPerTool ([int]$env:MAXIMUM_FINDINGS)
 
         exit $LASTEXITCODE
+    - name: Generate CRM QA ticket payload
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_SOURCE: ${{ steps.paths.outputs.results_directory }}
+        REPORTS_ROOT: ${{ steps.paths.outputs.reports_root }}
+        BASE_REFERENCE: ${{ inputs.base-reference }}
+        HEAD_REFERENCE: ${{ inputs.head-reference }}
+        REPOSITORY_NAME: ${{ github.repository }}
+        BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $crmDirectory = Join-Path $env:REPORTS_ROOT "crm"
+        New-Item -ItemType Directory -Path $crmDirectory -Force | Out-Null
+
+        $outputPath = Join-Path $crmDirectory "crm-tickets.json"
+        $scriptPath = Join-Path $env:TOOLKIT_ROOT "scripts\crm\generate-crm-tickets.mjs"
+
+        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+          throw "CRM ticket generator was not found: $scriptPath"
+        }
+
+        node $scriptPath `
+          $env:REPOSITORY_ROOT `
+          $env:CHANGED_FILES_PATH `
+          $env:RESULTS_SOURCE `
+          $outputPath `
+          $env:BASE_REFERENCE `
+          $env:HEAD_REFERENCE `
+          $env:REPOSITORY_NAME `
+          $env:BRANCH_NAME
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "CRM QA ticket payload generation failed with exit code $LASTEXITCODE."
+        }
+
+        Write-Host "CRM QA ticket payload: $outputPath"
+
     - name: Build backend repository
       id: build
       if: always()
@@ -575,8 +708,22 @@ runs:
       env:
         OVERALL_STATUS: ${{ steps.summary.outputs.overall_status }}
         BUILD_OUTCOME: ${{ steps.build.outcome }}
+        BRANCH_FRESHNESS_OUTCOME: ${{ steps.branch_freshness.outcome }}
+        BRANCH_BEHIND_COUNT: ${{ steps.branch_freshness.outputs.behind-count }}
       run: |
         $status = $env:OVERALL_STATUS
+
+        if ($env:BRANCH_FRESHNESS_OUTCOME -eq "failure") {
+          $behindCount = if ([string]::IsNullOrWhiteSpace($env:BRANCH_BEHIND_COUNT)) {
+            "unknown number of"
+          }
+          else {
+            $env:BRANCH_BEHIND_COUNT
+          }
+
+          Write-Error "Backend branch is outdated ($behindCount commit(s) behind the PR base). Merge the latest develop into the feature branch and push again."
+          exit 1
+        }
 
         if ($env:BUILD_OUTCOME -eq "failure") {
           Write-Error "Backend production build failed. Review the Production Build blocker in the QA dashboard."
