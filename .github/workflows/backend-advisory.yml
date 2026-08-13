@@ -88,45 +88,6 @@ jobs:
           head-reference: ${{ steps.refs.outputs.head-reference }}
           maximum-findings-per-tool: "10"
 
-      - name: Checkout CRM automation
-        if: github.event_name == 'push'
-        uses: actions/checkout@v4
-        with:
-          repository: integr8software/gr8booksneo-automation
-          ref: develop
-          path: qa-crm-automation
-          fetch-depth: 1
-
-      - name: Install CRM publisher dependencies
-        if: github.event_name == 'push'
-        shell: pwsh
-        working-directory: ${{ github.workspace }}\qa-crm-automation
-        run: |
-          $ErrorActionPreference = "Stop"
-          npm ci
-          npx playwright install chromium
-
-      - name: Publish QA tickets to CRM
-        if: github.event_name == 'pull_request'
-        shell: pwsh
-        env:
-          CRM_DRY_RUN: "false"
-          CRM_MAX_TICKETS: "200"
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $ticketsPath = Join-Path "${{ github.workspace }}" "reports\crm\crm-tickets.json"
-          $publisher = Join-Path "${{ github.workspace }}" "qa-crm-automation\scripts\crm\publish-crm-tickets.mjs"
-
-          if (-not (Test-Path -LiteralPath $ticketsPath -PathType Leaf)) {
-            throw "CRM ticket payload not found: $ticketsPath"
-          }
-
-          node $publisher $ticketsPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "CRM publishing failed with exit code $LASTEXITCODE."
-          }
-
       - name: Upload backend PR quality reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -221,8 +182,6 @@ jobs:
               `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
 
             const passed = process.env.ANALYSIS_RESULT === "success";
-            const statusIcon = passed ? "✅" : "❌";
-            const statusText = passed ? "PASSED" : "FAILED";
 
             let dashboardSection = `
             > The dashboard image was not generated. Open the workflow run for details.
