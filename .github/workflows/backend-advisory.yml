@@ -11,13 +11,6 @@ on:
       - develop
 
   workflow_call:
-    secrets:
-      CRM_BASE_URL:
-        required: true
-      CRM_USERNAME:
-        required: true
-      CRM_PASSWORD:
-        required: true
 
   workflow_dispatch:
 
@@ -117,9 +110,6 @@ jobs:
         if: github.event_name == 'push'
         shell: pwsh
         env:
-          CRM_BASE_URL: ${{ secrets.CRM_BASE_URL }}
-          CRM_USERNAME: ${{ secrets.CRM_USERNAME }}
-          CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
           CRM_DRY_RUN: "false"
           CRM_MAX_TICKETS: "200"
         run: |

@@ -1,14 +1,6 @@
 import fs from "node:fs";
 import { chromium } from "playwright";
 
-function requiredEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing environment variable: ${name}`);
-  }
-  return value;
-}
-
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -394,13 +386,9 @@ if (tickets.length > maxTickets) {
   );
 }
 
-const crmBaseUrl = requiredEnv("CRM_BASE_URL").replace(
-  /\/+$/,
-  "",
-);
-
-const crmUsername = requiredEnv("CRM_USERNAME");
-const crmPassword = requiredEnv("CRM_PASSWORD");
+const crmBaseUrl = "https://crm.integr8.com.ph:6711";
+const crmUsername = "gmenciano@integr8.com.ph";
+const crmPassword = "12345";
 
 const dryRun =
   String(

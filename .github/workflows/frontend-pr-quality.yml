@@ -33,12 +33,6 @@ on:
     secrets:
       QA_AUTOMATION_TOKEN:
         required: true
-      CRM_BASE_URL:
-        required: true
-      CRM_USERNAME:
-        required: true
-      CRM_PASSWORD:
-        required: true
 
   workflow_dispatch:
     inputs:
@@ -159,9 +153,6 @@ jobs:
         shell: pwsh
         working-directory: ${{ github.workspace }}\qa-automation
         env:
-          CRM_BASE_URL: ${{ secrets.CRM_BASE_URL }}
-          CRM_USERNAME: ${{ secrets.CRM_USERNAME }}
-          CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
           CRM_DRY_RUN: "false"
           CRM_MAX_TICKETS: "200"
         run: |
