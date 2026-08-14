@@ -215,41 +215,283 @@ function getDiff(repositoryRoot, baseSha, headSha, file) {
   }
 }
 
+function diffText(diff) {
+  return usefulDiffLines(diff, "+")
+    .concat(usefulDiffLines(diff, "-"))
+    .join("\n");
+}
+
+function includesAny(value, patterns) {
+  return patterns.some((pattern) =>
+    pattern instanceof RegExp
+      ? pattern.test(value)
+      : value.includes(pattern),
+  );
+}
+
 function buildFileConcern({
   file,
   diff,
 }) {
+  const normalizedFile = normalizePath(file);
+  const lowerFile = normalizedFile.toLowerCase();
+  const changed = diffText(diff);
+  const lowerChanged = changed.toLowerCase();
+
+  // Keep concerns short, factual, and tied only to evidence present
+  // in this file's PR diff. These are QA checks, not claims of defects.
+
+  if (
+    includesAny(lowerChanged, [
+      "bg-slate-",
+      "text-slate-",
+      "text-gray-",
+      "bg-gray-",
+      "text-white",
+      "bg-white",
+      "foreground",
+      "background",
+      "contrast",
+    ]) &&
+    /\.(tsx|jsx|css|scss)$/.test(lowerFile)
+  ) {
+    return "Template/UI readability — text and background contrast after styling changes.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "eyeoff",
+      "eye",
+      "istemplatepreviewvisible",
+      "setistemplatepreviewvisible",
+      "show",
+      "hide",
+      "readonly",
+    ]) &&
+    /\.(tsx|jsx)$/.test(lowerFile)
+  ) {
+    return "Template preview — visibility toggle behavior and readable source display.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "canvasselectionstate",
+      "canvasselectionrect",
+      "additive",
+      "currentx",
+      "currenty",
+      "startx",
+      "starty",
+    ])
+  ) {
+    return "Canvas selection — drag behavior and additive multi-selection accuracy.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      /\bwidth\??\s*:/,
+      /\bheight\??\s*:/,
+      "landscape",
+      "paperformat",
+      "format?:",
+    ]) &&
+    includesAny(lowerFile, ["pdf", "report", "print"])
+  ) {
+    return "PDF dimensions — width/height compatibility with format and landscape settings.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "fetch(",
+      "axios",
+      "usequery",
+      "usemutation",
+      "queryfn",
+      "mutationfn",
+      "response.",
+      "res.json",
+      "api/",
+      "endpoint",
+    ])
+  ) {
+    return "API handling — request, response, loading, and error behavior after the change.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "usestate(",
+      "useeffect(",
+      "usememo(",
+      "usecallback(",
+      "useref(",
+      "usecontext(",
+    ])
+  ) {
+    return "State/hooks — lifecycle, dependency, and state-update behavior after the change.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "@isstring",
+      "@isint",
+      "@isnumber",
+      "@isboolean",
+      "@isoptional",
+      "@isnotempty",
+      "@min(",
+      "@max(",
+      "@maxlength",
+      "@minlength",
+      "@validate",
+      "class-validator",
+      "zod",
+      "schema",
+    ])
+  ) {
+    return "Validation — accepted, rejected, optional, and boundary input behavior.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "$transaction",
+      "prisma.",
+      ".create(",
+      ".update(",
+      ".delete(",
+      ".upsert(",
+      ".findfirst(",
+      ".findunique(",
+      ".findmany(",
+    ]) &&
+    includesAny(lowerFile, ["service", "repository", "data", "api"])
+  ) {
+    return "Data persistence — transaction, duplicate, and partial-update behavior.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "total",
+      "subtotal",
+      "amount",
+      "balance",
+      "tax",
+      "vat",
+      "discount",
+      "rate",
+      "currency",
+      "round",
+      "percentage",
+      "quantity",
+      "debit",
+      "credit",
+    ])
+  ) {
+    return "Calculation logic — totals, rounding, and related financial values after the change.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "permission",
+      "authorize",
+      "authorise",
+      "guard",
+      "role",
+      "access",
+      "forbidden",
+      "unauthorized",
+      "companyid",
+      "branchid",
+    ])
+  ) {
+    return "Access control — permission and company/branch boundary behavior.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "status",
+      "approved",
+      "rejected",
+      "cancelled",
+      "canceled",
+      "posted",
+      "draft",
+      "transition",
+    ]) &&
+    includesAny(lowerFile, ["service", "hook", "data", "validation", "types"])
+  ) {
+    return "Workflow state — allowed transitions and status-dependent behavior.";
+  }
+
+  if (
+    includesAny(lowerChanged, [
+      "onclick",
+      "onchange",
+      "onsubmit",
+      "disabled",
+      "aria-",
+      "button",
+      "dialog",
+      "drawer",
+      "modal",
+      "tooltip",
+    ]) &&
+    /\.(tsx|jsx)$/.test(lowerFile)
+  ) {
+    return "UI interaction — control state, user actions, and accessibility behavior.";
+  }
+
+  if (
+    lowerFile.includes("controller.") ||
+    includesAny(lowerChanged, [
+      "@get(",
+      "@post(",
+      "@put(",
+      "@patch(",
+      "@delete(",
+      "@body(",
+      "@param(",
+      "@query(",
+    ])
+  ) {
+    return "API endpoint — request parameters, delegation, and response behavior.";
+  }
+
+  if (
+    lowerFile.includes("/dto/") ||
+    lowerFile.includes(".dto.")
+  ) {
+    return "DTO contract — field shape, optionality, and validation compatibility.";
+  }
+
+  if (
+    lowerFile.includes("types.") ||
+    lowerFile.includes("/types/")
+  ) {
+    return "Type contract — compatibility of updated fields with existing consumers.";
+  }
+
+  if (lowerFile.includes("constants")) {
+    return "Constants — updated values and dependent behavior remain consistent.";
+  }
+
+  if (lowerFile.includes("service.")) {
+    return "Service behavior — business rules, failures, and dependency interactions.";
+  }
+
+  if (lowerFile.includes("hook")) {
+    return "Hook behavior — state flow, dependencies, and consumer compatibility.";
+  }
+
+  if (/\.(tsx|jsx)$/.test(lowerFile)) {
+    return "UI behavior — rendering, interaction, and state handling after the change.";
+  }
+
+  if (/\.(ts|js|mjs|cjs)$/.test(lowerFile)) {
+    return "Code behavior — updated logic and dependent behavior after the change.";
+  }
+
   const area = classifyFile(file);
-
-  const removed = usefulDiffLines(diff, "-");
-  const added = usefulDiffLines(diff, "+");
-
-  if (removed.length === 1 && added.length === 1) {
-    const oldQuoted = quotedValue(removed[0]);
-    const newQuoted = quotedValue(added[0]);
-
-    if (
-      oldQuoted &&
-      newQuoted &&
-      oldQuoted !== newQuoted
-    ) {
-      return (
-        `QA Checked - Updated ${area} from ` +
-        `"${shorten(oldQuoted, 70)}" to ` +
-        `"${shorten(newQuoted, 70)}".`
-      );
-    }
-  }
-
-  if (added.length > 0 && removed.length === 0) {
-    return `QA Checked - Reviewed added ${area} changes.`;
-  }
-
-  if (removed.length > 0 && added.length === 0) {
-    return `QA Checked - Reviewed removed ${area} changes.`;
-  }
-
-  return `QA Checked - Reviewed ${area} changes.`;
+  return `${prettyName(area)} — behavior and compatibility after this file change.`;
 }
 
 function normalizeFindingLabel(detail, result) {
