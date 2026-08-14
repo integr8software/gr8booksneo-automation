@@ -32,7 +32,8 @@
       "enum": [
         "SECURITY",
         "CIRCULAR_DEPENDENCIES",
-        "UNUSED_CODE"
+        "UNUSED_CODE",
+        "BACKEND_REQUIREMENTS"
       ]
     },
     "status": {

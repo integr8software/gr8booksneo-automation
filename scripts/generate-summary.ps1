@@ -105,7 +105,8 @@ function Get-QaCategoryDisplayName {
         [ValidateSet(
             "SECURITY",
             "CIRCULAR_DEPENDENCIES",
-            "UNUSED_CODE"
+            "UNUSED_CODE",
+            "BACKEND_REQUIREMENTS"
         )]
         [string]$Category
     )
@@ -121,6 +122,10 @@ function Get-QaCategoryDisplayName {
 
         "UNUSED_CODE" {
             return "Unused code"
+        }
+
+        "BACKEND_REQUIREMENTS" {
+            return "Backend requirements"
         }
     }
 }
