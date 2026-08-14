@@ -114,7 +114,7 @@ function Get-LineNumberForText {
 
 function Add-Finding {
     param(
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[object]]$Findings,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Findings,
         [Parameter(Mandatory = $true)][string]$Severity,
         [Parameter(Mandatory = $true)][string]$Message,
         [Parameter(Mandatory = $true)][string]$File,
