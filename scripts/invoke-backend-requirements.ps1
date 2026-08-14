@@ -35,6 +35,21 @@ function Normalize-RepositoryPath {
     return $Path.Replace('\\', '/').TrimStart('.', '/').Trim()
 }
 
+function Get-SafeCount {
+    param([Parameter(Mandatory = $false)][AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return 0
+    }
+
+    $countProperty = $Value.PSObject.Properties['Count']
+    if ($null -ne $countProperty) {
+        return [int]$countProperty.Value
+    }
+
+    return @($Value).Length
+}
+
 function Get-AddedDiffLines {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -75,7 +90,7 @@ function Test-NewFileInPr {
     Push-Location $RepositoryRoot
     try {
         $added = @(git diff --name-only --diff-filter=A "$BaseReference...$HeadReference" -- $File 2>$null)
-        return ($LASTEXITCODE -eq 0 -and $added.Count -gt 0)
+        return ($LASTEXITCODE -eq 0 -and (Get-SafeCount -Value $added) -gt 0)
     }
     finally {
         Pop-Location
@@ -88,7 +103,7 @@ function Get-LineNumberForText {
         [Parameter(Mandatory = $true)][string]$Pattern
     )
 
-    for ($i = 0; $i -lt $Lines.Count; $i++) {
+    for ($i = 0; $i -lt (Get-SafeCount -Value $Lines); $i++) {
         if ($Lines[$i] -match $Pattern) {
             return ($i + 1)
         }
@@ -169,7 +184,7 @@ try {
         $check = [ordered]@{
             file = $file
             newFile = $isNewFile
-            addedLineCount = $addedLines.Count
+            addedLineCount = (Get-SafeCount -Value $addedLines)
             layer = "other"
             triggeredRules = @()
         }
@@ -259,10 +274,12 @@ try {
         [void]$rawChecks.Add([pscustomobject]$check)
     }
 
-    $highCount = @($findings | Where-Object { $_.severity -in @("HIGH", "CRITICAL") }).Count
-    $advisoryCount = @($findings | Where-Object { $_.severity -notin @("HIGH", "CRITICAL") }).Count
+    $highFindings = @($findings | Where-Object { $_.severity -in @("HIGH", "CRITICAL") })
+    $highCount = Get-SafeCount -Value $highFindings
+    $advisoryFindings = @($findings | Where-Object { $_.severity -notin @("HIGH", "CRITICAL") })
+    $advisoryCount = Get-SafeCount -Value $advisoryFindings
 
-    if ($analyzedFiles.Count -eq 0) {
+    if ((Get-SafeCount -Value $analyzedFiles) -eq 0) {
         $status = "SKIPPED"
         $blocking = $false
         $summary = "No changed backend files matched the Swagger/Jest requirement layers."
@@ -272,10 +289,10 @@ try {
         $blocking = $true
         $summary = "$highCount high-confidence backend requirement issue(s) must be fixed; $advisoryCount advisory item(s) also detected."
     }
-    elseif ($findings.Count -gt 0) {
+    elseif ((Get-SafeCount -Value $findings) -gt 0) {
         $status = "WARNING"
         $blocking = $false
-        $summary = "$($findings.Count) backend requirement review item(s) detected. These are advisory unless a high-confidence rule is violated."
+        $summary = "$(Get-SafeCount -Value $findings) backend requirement review item(s) detected. These are advisory unless a high-confidence rule is violated."
     }
     else {
         $status = "PASSED"
@@ -290,13 +307,13 @@ try {
         -Status $status `
         -Blocking $blocking `
         -ExitCode $(if ($blocking) { 1 } else { 0 }) `
-        -FindingCount $findings.Count `
+        -FindingCount (Get-SafeCount -Value $findings) `
         -DurationMs $durationMs `
         -Summary $summary `
         -Details $findings.ToArray() `
         -Metadata @{
-            changedFileCount = $changedFiles.Count
-            analyzedFileCount = $analyzedFiles.Count
+            changedFileCount = (Get-SafeCount -Value $changedFiles)
+            analyzedFileCount = (Get-SafeCount -Value $analyzedFiles)
             blockingFindingCount = $highCount
             advisoryFindingCount = $advisoryCount
             policy = "PR-diff conservative"
