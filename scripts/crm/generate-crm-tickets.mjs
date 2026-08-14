@@ -221,279 +221,210 @@ function diffText(diff) {
     .join("\n");
 }
 
-function includesAny(value, patterns) {
-  return patterns.some((pattern) =>
-    pattern instanceof RegExp
-      ? pattern.test(value)
-      : value.includes(pattern),
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function fileSubject(filePath) {
+  return prettyName(
+    path.basename(normalizePath(filePath)).replace(/\.[^.]+$/, ""),
   );
+}
+
+function extractIdentifiers(lines) {
+  const names = [];
+
+  for (const line of lines) {
+    const patterns = [
+      /\b(?:interface|type|class|enum|function)\s+([A-Za-z_$][\w$]*)/,
+      /\bconst\s*\[\s*([A-Za-z_$][\w$]*)/,
+      /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/,
+      /^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*:\s*[^=]/,
+      /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*[:{]/,
+    ];
+
+    for (const pattern of patterns) {
+      const match = line.match(pattern);
+
+      if (match?.[1]) {
+        names.push(match[1]);
+        break;
+      }
+    }
+  }
+
+  return unique(names);
+}
+
+function changedContext(added, removed) {
+  const changed = added.concat(removed).join("\n").toLowerCase();
+
+  if (
+    /preview|visible|visibility|show|hide|readonly|template/.test(changed)
+  ) {
+    return "preview visibility and display behavior";
+  }
+
+  if (
+    /selection|additive|currentx|currenty|startx|starty|rect/.test(changed)
+  ) {
+    return "selection state and drag behavior";
+  }
+
+  if (
+    /\bwidth\b|\bheight\b|landscape|paperformat|pageformat/.test(changed)
+  ) {
+    return "page dimension handling";
+  }
+
+  if (
+    /fetch\(|axios|usequery|usemutation|response|endpoint|api\//.test(changed)
+  ) {
+    return "request and response handling";
+  }
+
+  if (
+    /usestate|useeffect|usememo|usecallback|useref|usecontext/.test(changed)
+  ) {
+    return "state and lifecycle behavior";
+  }
+
+  if (
+    /class-validator|@is|@min|@max|@validate|schema|validation/.test(changed)
+  ) {
+    return "validation behavior";
+  }
+
+  if (
+    /\$transaction|prisma\.|\.create\(|\.update\(|\.delete\(|\.upsert\(/.test(changed)
+  ) {
+    return "persistence and transaction behavior";
+  }
+
+  if (
+    /total|subtotal|amount|balance|tax|vat|discount|rate|currency|round|quantity|debit|credit/.test(changed)
+  ) {
+    return "calculation behavior";
+  }
+
+  if (
+    /permission|authorize|authorise|guard|role|forbidden|unauthorized|companyid|branchid/.test(changed)
+  ) {
+    return "access-control behavior";
+  }
+
+  if (
+    /status|approved|rejected|cancelled|canceled|posted|draft|transition/.test(changed)
+  ) {
+    return "workflow-state behavior";
+  }
+
+  if (
+    /onclick|onchange|onsubmit|disabled|aria-|button|dialog|drawer|modal|tooltip/.test(changed)
+  ) {
+    return "interaction and control-state behavior";
+  }
+
+  return "updated behavior and compatibility";
+}
+
+function summarizeChangedLine(line) {
+  return shorten(
+    String(line)
+      .replace(/\s+/g, " ")
+      .replace(/[{};]/g, "")
+      .trim(),
+    72,
+  );
+}
+
+function formatNames(names, maximum = 2) {
+  const selected = names.slice(0, maximum);
+
+  if (selected.length === 0) {
+    return "";
+  }
+
+  if (selected.length === 1) {
+    return `\`${selected[0]}\``;
+  }
+
+  return `\`${selected[0]}\` and \`${selected[1]}\``;
 }
 
 function buildFileConcern({
   file,
   diff,
 }) {
-  const normalizedFile = normalizePath(file);
-  const lowerFile = normalizedFile.toLowerCase();
-  const changed = diffText(diff);
-  const lowerChanged = changed.toLowerCase();
+  const subject = fileSubject(file);
+  const added = usefulDiffLines(diff, "+");
+  const removed = usefulDiffLines(diff, "-");
 
-  // Keep concerns short, factual, and tied only to evidence present
-  // in this file's PR diff. These are QA checks, not claims of defects.
+  const addedNames = extractIdentifiers(added);
+  const removedNames = extractIdentifiers(removed);
+  const context = changedContext(added, removed);
 
+  // A clear rename/replacement is the most specific concern we can produce.
   if (
-    includesAny(lowerChanged, [
-      "bg-slate-",
-      "text-slate-",
-      "text-gray-",
-      "bg-gray-",
-      "text-white",
-      "bg-white",
-      "foreground",
-      "background",
-      "contrast",
-    ]) &&
-    /\.(tsx|jsx|css|scss)$/.test(lowerFile)
+    removedNames.length === 1 &&
+    addedNames.length === 1 &&
+    removedNames[0] !== addedNames[0]
   ) {
-    return "Template/UI readability — text and background contrast after styling changes.";
+    return (
+      `${subject} — \`${removedNames[0]}\` replaced by ` +
+      `\`${addedNames[0]}\`; check ${context}.`
+    );
   }
 
-  if (
-    includesAny(lowerChanged, [
-      "eyeoff",
-      "eye",
-      "istemplatepreviewvisible",
-      "setistemplatepreviewvisible",
-      "show",
-      "hide",
-      "readonly",
-    ]) &&
-    /\.(tsx|jsx)$/.test(lowerFile)
-  ) {
-    return "Template preview — visibility toggle behavior and readable source display.";
+  // Prefer the exact symbols introduced by this file's diff.
+  if (addedNames.length > 0) {
+    const names = formatNames(addedNames);
+
+    if (removedNames.length > 0) {
+      return `${subject} — ${names} updated; check ${context}.`;
+    }
+
+    return `${subject} — added ${names}; check ${context}.`;
   }
 
-  if (
-    includesAny(lowerChanged, [
-      "canvasselectionstate",
-      "canvasselectionrect",
-      "additive",
-      "currentx",
-      "currenty",
-      "startx",
-      "starty",
-    ])
-  ) {
-    return "Canvas selection — drag behavior and additive multi-selection accuracy.";
+  // If the change only removes symbols, say exactly what was removed.
+  if (removedNames.length > 0) {
+    return (
+      `${subject} — removed ${formatNames(removedNames)}; ` +
+      `check ${context}.`
+    );
   }
 
-  if (
-    includesAny(lowerChanged, [
-      /\bwidth\??\s*:/,
-      /\bheight\??\s*:/,
-      "landscape",
-      "paperformat",
-      "format?:",
-    ]) &&
-    includesAny(lowerFile, ["pdf", "report", "print"])
-  ) {
-    return "PDF dimensions — width/height compatibility with format and landscape settings.";
+  // Preserve useful literal-only edits, such as labels or configuration values.
+  if (removed.length === 1 && added.length === 1) {
+    const oldQuoted = quotedValue(removed[0]);
+    const newQuoted = quotedValue(added[0]);
+
+    if (
+      oldQuoted &&
+      newQuoted &&
+      oldQuoted !== newQuoted
+    ) {
+      return (
+        `${subject} — "${shorten(oldQuoted, 32)}" changed to ` +
+        `"${shorten(newQuoted, 32)}"; check dependent behavior.`
+      );
+    }
   }
 
-  if (
-    includesAny(lowerChanged, [
-      "fetch(",
-      "axios",
-      "usequery",
-      "usemutation",
-      "queryfn",
-      "mutationfn",
-      "response.",
-      "res.json",
-      "api/",
-      "endpoint",
-    ])
-  ) {
-    return "API handling — request, response, loading, and error behavior after the change.";
+  // Final fallback still uses this file's actual diff rather than a shared
+  // category, so unrelated files do not collapse into identical concerns.
+  const representative = added[0] || removed[0];
+
+  if (representative) {
+    return (
+      `${subject} — ${summarizeChangedLine(representative)}; ` +
+      `check ${context}.`
+    );
   }
 
-  if (
-    includesAny(lowerChanged, [
-      "usestate(",
-      "useeffect(",
-      "usememo(",
-      "usecallback(",
-      "useref(",
-      "usecontext(",
-    ])
-  ) {
-    return "State/hooks — lifecycle, dependency, and state-update behavior after the change.";
-  }
-
-  if (
-    includesAny(lowerChanged, [
-      "@isstring",
-      "@isint",
-      "@isnumber",
-      "@isboolean",
-      "@isoptional",
-      "@isnotempty",
-      "@min(",
-      "@max(",
-      "@maxlength",
-      "@minlength",
-      "@validate",
-      "class-validator",
-      "zod",
-      "schema",
-    ])
-  ) {
-    return "Validation — accepted, rejected, optional, and boundary input behavior.";
-  }
-
-  if (
-    includesAny(lowerChanged, [
-      "$transaction",
-      "prisma.",
-      ".create(",
-      ".update(",
-      ".delete(",
-      ".upsert(",
-      ".findfirst(",
-      ".findunique(",
-      ".findmany(",
-    ]) &&
-    includesAny(lowerFile, ["service", "repository", "data", "api"])
-  ) {
-    return "Data persistence — transaction, duplicate, and partial-update behavior.";
-  }
-
-  if (
-    includesAny(lowerChanged, [
-      "total",
-      "subtotal",
-      "amount",
-      "balance",
-      "tax",
-      "vat",
-      "discount",
-      "rate",
-      "currency",
-      "round",
-      "percentage",
-      "quantity",
-      "debit",
-      "credit",
-    ])
-  ) {
-    return "Calculation logic — totals, rounding, and related financial values after the change.";
-  }
-
-  if (
-    includesAny(lowerChanged, [
-      "permission",
-      "authorize",
-      "authorise",
-      "guard",
-      "role",
-      "access",
-      "forbidden",
-      "unauthorized",
-      "companyid",
-      "branchid",
-    ])
-  ) {
-    return "Access control — permission and company/branch boundary behavior.";
-  }
-
-  if (
-    includesAny(lowerChanged, [
-      "status",
-      "approved",
-      "rejected",
-      "cancelled",
-      "canceled",
-      "posted",
-      "draft",
-      "transition",
-    ]) &&
-    includesAny(lowerFile, ["service", "hook", "data", "validation", "types"])
-  ) {
-    return "Workflow state — allowed transitions and status-dependent behavior.";
-  }
-
-  if (
-    includesAny(lowerChanged, [
-      "onclick",
-      "onchange",
-      "onsubmit",
-      "disabled",
-      "aria-",
-      "button",
-      "dialog",
-      "drawer",
-      "modal",
-      "tooltip",
-    ]) &&
-    /\.(tsx|jsx)$/.test(lowerFile)
-  ) {
-    return "UI interaction — control state, user actions, and accessibility behavior.";
-  }
-
-  if (
-    lowerFile.includes("controller.") ||
-    includesAny(lowerChanged, [
-      "@get(",
-      "@post(",
-      "@put(",
-      "@patch(",
-      "@delete(",
-      "@body(",
-      "@param(",
-      "@query(",
-    ])
-  ) {
-    return "API endpoint — request parameters, delegation, and response behavior.";
-  }
-
-  if (
-    lowerFile.includes("/dto/") ||
-    lowerFile.includes(".dto.")
-  ) {
-    return "DTO contract — field shape, optionality, and validation compatibility.";
-  }
-
-  if (
-    lowerFile.includes("types.") ||
-    lowerFile.includes("/types/")
-  ) {
-    return "Type contract — compatibility of updated fields with existing consumers.";
-  }
-
-  if (lowerFile.includes("constants")) {
-    return "Constants — updated values and dependent behavior remain consistent.";
-  }
-
-  if (lowerFile.includes("service.")) {
-    return "Service behavior — business rules, failures, and dependency interactions.";
-  }
-
-  if (lowerFile.includes("hook")) {
-    return "Hook behavior — state flow, dependencies, and consumer compatibility.";
-  }
-
-  if (/\.(tsx|jsx)$/.test(lowerFile)) {
-    return "UI behavior — rendering, interaction, and state handling after the change.";
-  }
-
-  if (/\.(ts|js|mjs|cjs)$/.test(lowerFile)) {
-    return "Code behavior — updated logic and dependent behavior after the change.";
-  }
-
-  const area = classifyFile(file);
-  return `${prettyName(area)} — behavior and compatibility after this file change.`;
+  return `${subject} — changed file; check updated behavior and compatibility.`;
 }
-
 function normalizeFindingLabel(detail, result) {
   const severity = String(detail.severity ?? "").toUpperCase();
 
