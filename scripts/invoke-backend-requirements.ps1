@@ -293,7 +293,7 @@ try {
         -FindingCount $findings.Count `
         -DurationMs $durationMs `
         -Summary $summary `
-        -Details @($findings) `
+        -Details $findings.ToArray() `
         -Metadata @{
             changedFileCount = $changedFiles.Count
             analyzedFileCount = $analyzedFiles.Count
@@ -308,8 +308,8 @@ try {
         policy = "PR-diff conservative"
         baseReference = $BaseReference
         headReference = $HeadReference
-        analyzedFiles = @($analyzedFiles)
-        checks = @($rawChecks)
+        analyzedFiles = $analyzedFiles.ToArray()
+        checks = $rawChecks.ToArray()
     } -Path $resolvedRawOutputPath | Out-Null
 
     if ($blocking) {
