@@ -506,7 +506,8 @@ function Assert-QaResult {
     $allowedCategories = @(
         "SECURITY",
         "CIRCULAR_DEPENDENCIES",
-        "UNUSED_CODE"
+        "UNUSED_CODE",
+        "BACKEND_REQUIREMENTS"
     )
 
     if ([string]$Result.category -notin $allowedCategories) {
@@ -632,7 +633,8 @@ function New-QaResult {
         [ValidateSet(
             "SECURITY",
             "CIRCULAR_DEPENDENCIES",
-            "UNUSED_CODE"
+            "UNUSED_CODE",
+            "BACKEND_REQUIREMENTS"
         )]
         [string]$Category,
 

@@ -418,6 +418,42 @@ runs:
 
         exit $LASTEXITCODE
 
+    - name: Run backend Swagger and Jest requirements check
+      id: backend_requirements
+      continue-on-error: true
+      shell: pwsh
+      env:
+        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
+        REPOSITORY_ROOT: ${{ steps.paths.outputs.repository_root }}
+        CHANGED_FILES_PATH: ${{ steps.paths.outputs.changed_files_path }}
+        RESULTS_DIRECTORY: ${{ steps.paths.outputs.results_directory }}
+        RAW_DIRECTORY: ${{ steps.paths.outputs.raw_directory }}
+        BASE_REFERENCE: ${{ inputs.base-reference }}
+        HEAD_REFERENCE: ${{ inputs.head-reference }}
+      run: |
+        $scriptPath = Join-Path `
+          $env:TOOLKIT_ROOT `
+          "scripts\invoke-backend-requirements.ps1"
+
+        $resultPath = Join-Path `
+          $env:RESULTS_DIRECTORY `
+          "backend-requirements-result.json"
+
+        $rawOutputPath = Join-Path `
+          $env:RAW_DIRECTORY `
+          "backend-requirements-raw.json"
+
+        & $scriptPath `
+          -ToolkitRoot $env:TOOLKIT_ROOT `
+          -RepositoryRoot $env:REPOSITORY_ROOT `
+          -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -BaseReference $env:BASE_REFERENCE `
+          -HeadReference $env:HEAD_REFERENCE `
+          -ResultPath $resultPath `
+          -RawOutputPath $rawOutputPath
+
+        exit $LASTEXITCODE
+
     - name: Generate developer-friendly summary
       id: summary
       if: always()

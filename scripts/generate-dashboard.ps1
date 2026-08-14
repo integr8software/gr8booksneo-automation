@@ -72,6 +72,14 @@ function Category-Info([string]$Category) {
                 Fix = "Move shared behavior into a separate module that both modules can use without depending on each other."
             }
         }
+        "BACKEND_REQUIREMENTS" {
+            return @{
+                Name = "Backend Requirements"; Tool = "PR Swagger/Jest Check"; Bubble = "";
+                Icon = '<svg viewBox="0 0 24 24" fill="none" stroke="#1261d8" stroke-width="2"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>';
+                Symbol = "✓"; Color = "#1261d8";
+                Fix = "Apply the requirement only to the changed behavior: document changed API contracts and add meaningful Jest coverage for business-critical logic. Do not add checklist-only tests."
+            }
+        }
         default {
             return @{
                 Name = "Code Cleanup"; Tool = "Knip"; Bubble = "amber";
@@ -303,7 +311,7 @@ $triggeredBy = First-Text @($env:QA_PR_AUTHOR, $env:QA_TRIGGERED_BY, $env:GITHUB
 if (-not $triggeredBy.StartsWith("@")) { $triggeredBy = "@$triggeredBy" }
 
 $qualityCards = @()
-foreach ($categoryName in @("SECURITY","CIRCULAR_DEPENDENCIES","UNUSED_CODE")) {
+foreach ($categoryName in @("SECURITY","CIRCULAR_DEPENDENCIES","UNUSED_CODE","BACKEND_REQUIREMENTS")) {
     $category = Category-Info $categoryName
     $result = $results | Where-Object category -eq $categoryName | Select-Object -First 1
     $status = if ($null -eq $result) { "SKIPPED" } else { [string]$result.status }
