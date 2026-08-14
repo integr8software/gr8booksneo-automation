@@ -80,7 +80,7 @@ jobs:
           Write-Host "QA head: $headReference"
 
       - name: Run backend PR quality analysis
-        uses: integr8software/gr8booksneo-automation/.github/actions/backend-analysis@develop
+        uses: integr8software/gr8booksneo-automation/.github/actions/backend-analysis@feature/backend-requirements-check
         with:
           repository-root: ${{ github.workspace }}
           tsconfig-path: tsconfig.json
