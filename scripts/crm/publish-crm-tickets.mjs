@@ -273,23 +273,73 @@ function ticketRows(page) {
 }
 
 async function addRow(page, expectedCount) {
-  const addButton = page.locator("#MainContent_dgvEntry_btnAdd_Entry");
+  const maximumAttempts = 3;
 
-  await addButton.waitFor({
-    state: "visible",
-    timeout: 15000,
-  });
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    const currentCount = await ticketRows(page).count();
 
-  await addButton.click();
+    if (currentCount >= expectedCount) {
+      return;
+    }
 
-  await page.waitForFunction(
-    (count) =>
-      document.querySelectorAll('[id*="txtConcern_Entry_"]').length >= count,
-    expectedCount,
-    {
-      timeout: 20000,
-    },
-  );
+    const addButton = page
+      .locator("#MainContent_dgvEntry_btnAdd_Entry")
+      .first();
+
+    await addButton.waitFor({
+      state: "visible",
+      timeout: 30000,
+    });
+
+    if (!(await addButton.isEnabled())) {
+      throw new Error(
+        `CRM Add Entry button is disabled while waiting for row ${expectedCount}.`,
+      );
+    }
+
+    console.log(
+      `Adding CRM row ${expectedCount} (attempt ${attempt}/${maximumAttempts})...`,
+    );
+
+    await addButton.click({
+      timeout: 30000,
+    });
+
+    try {
+      await page.waitForFunction(
+        (count) =>
+          document.querySelectorAll('[id*="txtConcern_Entry_"]').length >= count,
+        expectedCount,
+        {
+          timeout: 60000,
+        },
+      );
+
+      return;
+    } catch (error) {
+      const rowCountAfterWait = await ticketRows(page).count();
+
+      if (rowCountAfterWait >= expectedCount) {
+        return;
+      }
+
+      if (attempt === maximumAttempts) {
+        throw new Error(
+          `CRM failed to add entry row ${expectedCount} after ${maximumAttempts} attempts. ` +
+          `Current row count: ${rowCountAfterWait}.`,
+          {
+            cause: error,
+          },
+        );
+      }
+
+      console.warn(
+        `CRM row ${expectedCount} did not appear yet. Retrying Add Entry...`,
+      );
+
+      await page.waitForTimeout(1500);
+    }
+  }
 }
 
 async function fillTicketRow(page, row, ticket, fixed) {
