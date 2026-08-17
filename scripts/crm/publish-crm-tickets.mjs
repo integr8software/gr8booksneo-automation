@@ -273,73 +273,25 @@ function ticketRows(page) {
 }
 
 async function addRow(page, expectedCount) {
-  const maximumAttempts = 3;
+  const addButton = page.locator("#MainContent_dgvEntry_btnAdd_Entry").first();
 
-  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-    const currentCount = await ticketRows(page).count();
+  await addButton.waitFor({ state: "visible", timeout: 30000 });
 
-    if (currentCount >= expectedCount) {
-      return;
-    }
-
-    const addButton = page
-      .locator("#MainContent_dgvEntry_btnAdd_Entry")
-      .first();
-
-    await addButton.waitFor({
-      state: "visible",
-      timeout: 30000,
-    });
-
-    if (!(await addButton.isEnabled())) {
-      throw new Error(
-        `CRM Add Entry button is disabled while waiting for row ${expectedCount}.`,
-      );
-    }
-
-    console.log(
-      `Adding CRM row ${expectedCount} (attempt ${attempt}/${maximumAttempts})...`,
+  if (!(await addButton.isEnabled())) {
+    throw new Error(
+      `CRM Add Entry button is disabled while waiting for row ${expectedCount}.`,
     );
-
-    await addButton.click({
-      timeout: 30000,
-    });
-
-    try {
-      await page.waitForFunction(
-        (count) =>
-          document.querySelectorAll('[id*="txtConcern_Entry_"]').length >= count,
-        expectedCount,
-        {
-          timeout: 60000,
-        },
-      );
-
-      return;
-    } catch (error) {
-      const rowCountAfterWait = await ticketRows(page).count();
-
-      if (rowCountAfterWait >= expectedCount) {
-        return;
-      }
-
-      if (attempt === maximumAttempts) {
-        throw new Error(
-          `CRM failed to add entry row ${expectedCount} after ${maximumAttempts} attempts. ` +
-          `Current row count: ${rowCountAfterWait}.`,
-          {
-            cause: error,
-          },
-        );
-      }
-
-      console.warn(
-        `CRM row ${expectedCount} did not appear yet. Retrying Add Entry...`,
-      );
-
-      await page.waitForTimeout(1500);
-    }
   }
+
+  console.log(`Adding CRM row ${expectedCount}...`);
+  await addButton.click({ timeout: 30000 });
+
+  await page.waitForFunction(
+    (count) =>
+      document.querySelectorAll('[id*="txtConcern_Entry_"]').length >= count,
+    expectedCount,
+    { timeout: 60000 },
+  );
 }
 
 async function fillTicketRow(page, row, ticket, fixed) {
@@ -466,98 +418,117 @@ const context = await browser.newContext();
 try {
   const page = await context.newPage();
 
-  await loginToCrm(
-    page,
-    crmBaseUrl,
-    crmUsername,
-    crmPassword,
+  await loginToCrm(page, crmBaseUrl, crmUsername, crmPassword);
+
+  const batchSize = Math.max(
+    1,
+    Number(process.env.CRM_BATCH_SIZE || "6"),
   );
+  const totalBatches = Math.ceil(tickets.length / batchSize);
+  let submittedTotal = 0;
 
-  console.log("Opening Help Desk...");
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
+    const batchStart = batchIndex * batchSize;
+    const batch = tickets.slice(batchStart, batchStart + batchSize);
 
-  await page.goto(
-    `${crmBaseUrl}/Pages/helpdesk.aspx`,
-    {
+    console.log(
+      `Opening Help Desk for batch ${batchIndex + 1}/${totalBatches}...`,
+    );
+
+    await page.goto(`${crmBaseUrl}/Pages/helpdesk.aspx`, {
       waitUntil: "domcontentloaded",
       timeout: 60000,
-    },
-  );
+    });
 
-  await page
-    .locator("#MainContent_dgvEntry_ddlType_0")
-    .waitFor({
+    await page.locator("#MainContent_dgvEntry_ddlType_0").waitFor({
       state: "visible",
       timeout: 30000,
     });
 
-  let rows = ticketRows(page);
-  let rowCount = await rows.count();
+    let rows = ticketRows(page);
+    let rowCount = await rows.count();
 
-  if (rowCount === 0) {
-    throw new Error(
-      "No Help Desk entry row was found.",
-    );
-  }
-
-  for (
-    let index = 0;
-    index < tickets.length;
-    index += 1
-  ) {
-    rows = ticketRows(page);
-    rowCount = await rows.count();
-
-    while (rowCount <= index) {
-      await addRow(page, rowCount + 1);
-
-      rows = ticketRows(page);
-      rowCount = await rows.count();
+    if (rowCount === 0) {
+      throw new Error("No Help Desk entry row was found.");
     }
 
-    const ticket = tickets[index];
+    for (
+      let batchTicketIndex = 0;
+      batchTicketIndex < batch.length;
+      batchTicketIndex += 1
+    ) {
+      rows = ticketRows(page);
+      rowCount = await rows.count();
+
+      while (rowCount <= batchTicketIndex) {
+        await addRow(page, rowCount + 1);
+        rows = ticketRows(page);
+        rowCount = await rows.count();
+      }
+
+      const ticket = batch[batchTicketIndex];
+      const globalIndex = batchStart + batchTicketIndex;
+
+      console.log(
+        `[${globalIndex + 1}/${tickets.length}] ` +
+          `${ticket.module}: ${ticket.concern}`,
+      );
+
+      await fillTicketRow(
+        page,
+        rows.nth(batchTicketIndex),
+        ticket,
+        fixed,
+      );
+    }
 
     console.log(
-      `[${index + 1}/${tickets.length}] ` +
-        `${ticket.module}: ${ticket.concern}`,
+      `Prepared ${batch.length} CRM ticket row(s) for batch ` +
+        `${batchIndex + 1}/${totalBatches}.`,
     );
 
-    await fillTicketRow(
-      page,
-      rows.nth(index),
-      ticket,
-      fixed,
+    if (dryRun) {
+      console.log(
+        `CRM_DRY_RUN=true — batch ${batchIndex + 1}/${totalBatches} was not submitted.`,
+      );
+      continue;
+    }
+
+    console.log(
+      `Submitting CRM batch ${batchIndex + 1}/${totalBatches}...`,
+    );
+
+    const submit = page.locator("#MainContent_btnSave");
+
+    await submit.waitFor({
+      state: "visible",
+      timeout: 30000,
+    });
+
+    await submit.click({ timeout: 30000 });
+    await page.waitForTimeout(3000);
+
+    submittedTotal += batch.length;
+
+    console.log(
+      `Submitted ${batch.length} CRM ticket(s) in batch ` +
+        `${batchIndex + 1}/${totalBatches}. Total submitted: ` +
+        `${submittedTotal}/${tickets.length}.`,
     );
   }
-
-  console.log(
-    `Prepared ${tickets.length} CRM ticket row(s).`,
-  );
 
   if (dryRun) {
     console.log(
-      "CRM_DRY_RUN=true — no tickets were submitted.",
+      `CRM_DRY_RUN=true — prepared ${tickets.length} ticket(s) across ` +
+        `${totalBatches} batch(es); nothing was submitted.`,
     );
-    process.exit(0);
+  } else {
+    console.log(
+      `Submitted ${submittedTotal} CRM ticket(s) across ` +
+        `${totalBatches} batch(es).`,
+    );
   }
 
-  console.log("Submitting CRM tickets...");
-
-  const submit = page.locator(
-    "#MainContent_btnSave",
-  );
-
-  await submit.waitFor({
-    state: "visible",
-    timeout: 15000,
-  });
-
-  await submit.click();
-
-  await page.waitForTimeout(3000);
-
-  console.log(
-    `Submitted ${tickets.length} CRM ticket(s).`,
-  );
 } finally {
   await context.close();
   await browser.close();
