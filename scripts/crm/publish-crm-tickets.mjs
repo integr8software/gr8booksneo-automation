@@ -420,10 +420,10 @@ try {
 
   await loginToCrm(page, crmBaseUrl, crmUsername, crmPassword);
 
-  const batchSize = Math.max(
-    1,
-    Number(process.env.CRM_BATCH_SIZE || "6"),
-  );
+  // The CRM Add Entry control is unreliable after page updates.
+  // Publish one ticket per Help Desk form so the existing first row is used
+  // and no Add Entry click is required. This favors reliability over speed.
+  const batchSize = 1;
   const totalBatches = Math.ceil(tickets.length / batchSize);
   let submittedTotal = 0;
 
