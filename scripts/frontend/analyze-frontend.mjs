@@ -1143,12 +1143,24 @@ export async function analyzeFrontend(
     `Analyzing ${changedFiles.length} frontend file(s)...`,
   );
 
-  const detectorResult = await runDetectors({
-    repositoryRoot,
-    files: changedFiles,
-    config,
-    verbose: options.verbose,
-  });
+  const detectorResult =
+    changedFiles.length === 0
+      ? {
+          findings: [],
+          detectorRuns: DETECTORS.map((detector) => ({
+            detector: detector.name,
+            status: "skipped",
+            findings: 0,
+            durationMs: 0,
+            error: null,
+          })),
+        }
+      : await runDetectors({
+          repositoryRoot,
+          files: changedFiles,
+          config,
+          verbose: options.verbose,
+        });
 
   const reportingOptions =
     resolveReportingOptions(config, options);

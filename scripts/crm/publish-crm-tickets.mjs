@@ -383,9 +383,12 @@ const maxTickets = Number(
 );
 
 if (tickets.length > maxTickets) {
-  throw new Error(
-    `Refusing to process ${tickets.length} tickets because CRM_MAX_TICKETS=${maxTickets}.`,
+  console.warn(
+    `CRM safety limit reached: generated ${tickets.length} ticket(s), ` +
+      `which exceeds CRM_MAX_TICKETS=${maxTickets}. ` +
+      `No CRM tickets were published. The full generated payload remains available for reporting/audit.`,
   );
+  process.exit(0);
 }
 
 const crmBaseUrl = "https://crm.integr8.com.ph:6711";
