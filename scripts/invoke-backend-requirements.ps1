@@ -99,11 +99,24 @@ function Test-NewFileInPr {
 
 function Get-LineNumberForText {
     param(
-        [Parameter(Mandatory = $true)][string[]]$Lines,
-        [Parameter(Mandatory = $true)][string]$Pattern
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Lines,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern
     )
 
+    if ((Get-SafeCount -Value $Lines) -eq 0) {
+        return $null
+    }
+
     for ($i = 0; $i -lt (Get-SafeCount -Value $Lines); $i++) {
+        if ([string]::IsNullOrWhiteSpace($Lines[$i])) {
+            continue
+        }
+
         if ($Lines[$i] -match $Pattern) {
             return ($i + 1)
         }
