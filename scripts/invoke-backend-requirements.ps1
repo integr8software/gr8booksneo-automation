@@ -79,6 +79,143 @@ function Get-AddedDiffLines {
     }
 }
 
+function Get-AddedDiffEntries {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$BaseReference,
+        [Parameter(Mandatory = $true)][string]$HeadReference,
+        [Parameter(Mandatory = $true)][string]$File
+    )
+
+    Push-Location $RepositoryRoot
+    try {
+        $diff = @(git diff --no-ext-diff --unified=0 "$BaseReference...$HeadReference" -- $File 2>$null)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect PR diff for $File"
+        }
+
+        $entries = New-Object 'System.Collections.Generic.List[object]'
+        $newLineNumber = 0
+
+        foreach ($diffLine in $diff) {
+            if ($diffLine -match '^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@') {
+                $newLineNumber = [int]$Matches[1]
+                continue
+            }
+
+            if ($diffLine -match '^\+\+\+') {
+                continue
+            }
+
+            if ($diffLine -match '^\+') {
+                [void]$entries.Add([pscustomobject]@{
+                    line = $newLineNumber
+                    text = $diffLine.Substring(1)
+                })
+                $newLineNumber += 1
+                continue
+            }
+
+            if ($diffLine -match '^-') {
+                continue
+            }
+
+            if ($diffLine -match '^\\') {
+                continue
+            }
+
+            if ($newLineNumber -gt 0) {
+                $newLineNumber += 1
+            }
+        }
+
+        return $entries.ToArray()
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+function Get-EndpointBlockText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Lines,
+
+        [Parameter(Mandatory = $true)][int]$RouteLineNumber
+    )
+
+    if ((Get-SafeCount -Value $Lines) -eq 0) {
+        return ""
+    }
+
+    $routeIndex = $RouteLineNumber - 1
+    if ($routeIndex -lt 0 -or $routeIndex -ge (Get-SafeCount -Value $Lines)) {
+        return ""
+    }
+
+    $routePattern = '^\s*@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\('
+
+    $startIndex = 0
+    for ($i = $routeIndex - 1; $i -ge 0; $i--) {
+        if ($Lines[$i] -match $routePattern) {
+            $startIndex = $i + 1
+            break
+        }
+    }
+
+    $endIndex = (Get-SafeCount -Value $Lines) - 1
+    for ($i = $routeIndex + 1; $i -lt (Get-SafeCount -Value $Lines); $i++) {
+        if ($Lines[$i] -match $routePattern) {
+            $endIndex = $i - 1
+            break
+        }
+    }
+
+    if ($endIndex -lt $startIndex) {
+        return ""
+    }
+
+    return (($Lines[$startIndex..$endIndex]) -join "`n")
+}
+
+function Get-PropertyDecoratorBlockText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Lines,
+
+        [Parameter(Mandatory = $true)][int]$PropertyLineNumber
+    )
+
+    if ((Get-SafeCount -Value $Lines) -eq 0) {
+        return ""
+    }
+
+    $propertyIndex = $PropertyLineNumber - 1
+    if ($propertyIndex -lt 0 -or $propertyIndex -ge (Get-SafeCount -Value $Lines)) {
+        return ""
+    }
+
+    $propertyPattern = '^\s*(readonly\s+)?[A-Za-z_$][A-Za-z0-9_$]*[!?]?\s*:'
+    $startIndex = 0
+
+    for ($i = $propertyIndex - 1; $i -ge 0; $i--) {
+        if ($Lines[$i] -match $propertyPattern -or $Lines[$i] -match '^\s*(export\s+)?class\s+') {
+            $startIndex = $i + 1
+            break
+        }
+    }
+
+    if ($propertyIndex -le $startIndex) {
+        return ""
+    }
+
+    return (($Lines[$startIndex..($propertyIndex - 1)]) -join "`n")
+}
+
 function Test-NewFileInPr {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -191,6 +328,7 @@ try {
         $content = Get-Content -LiteralPath $absolute -Raw
         $lines = @(Get-Content -LiteralPath $absolute)
         $addedLines = @(Get-AddedDiffLines -RepositoryRoot $resolvedRepositoryRoot -BaseReference $BaseReference -HeadReference $HeadReference -File $file)
+        $addedEntries = @(Get-AddedDiffEntries -RepositoryRoot $resolvedRepositoryRoot -BaseReference $BaseReference -HeadReference $HeadReference -File $file)
         $addedText = ($addedLines -join "`n")
         $isNewFile = Test-NewFileInPr -RepositoryRoot $resolvedRepositoryRoot -BaseReference $BaseReference -HeadReference $HeadReference -File $file
 
@@ -204,51 +342,92 @@ try {
 
         if ($file -match '\.controller\.ts$') {
             $check.layer = "controller"
-            $routeChanged = $addedText -match '@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\('
-            if ($routeChanged) {
+
+            $changedRoutes = @(
+                $addedEntries |
+                    Where-Object {
+                        $_.text -match '^\s*@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\('
+                    }
+            )
+
+            if ((Get-SafeCount -Value $changedRoutes) -gt 0) {
                 if ($content -notmatch '@ApiTags\s*\(') {
                     $severity = if ($isNewFile) { "HIGH" } else { "MEDIUM" }
                     Add-Finding -Findings $findings -Severity $severity -Message "Changed controller exposes API routes but has no @ApiTags() Swagger metadata." -File $file -Line (Get-LineNumberForText -Lines $lines -Pattern '@Controller\s*\(') -RuleId "backend.swagger.controller.tags"
                     $check.triggeredRules += "backend.swagger.controller.tags"
                 }
 
-                if ($addedText -match '@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\(') {
-                    $hasOperation = $content -match '@ApiOperation\s*\('
-                    $hasResponse = $content -match '@Api(OkResponse|CreatedResponse|AcceptedResponse|NoContentResponse|BadRequestResponse|UnauthorizedResponse|ForbiddenResponse|NotFoundResponse|ConflictResponse|Response)\s*\('
-                    if (-not $hasOperation) {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "PR adds or changes a controller route, but no @ApiOperation() metadata was found in this controller. Review the changed endpoint documentation." -File $file -Line $null -RuleId "backend.swagger.controller.operation"
+                foreach ($route in $changedRoutes) {
+                    $routeLine = [int]$route.line
+                    $endpointBlock = Get-EndpointBlockText -Lines $lines -RouteLineNumber $routeLine
+
+                    if ([string]::IsNullOrWhiteSpace($endpointBlock)) {
+                        continue
+                    }
+
+                    if ($endpointBlock -notmatch '@ApiOperation\s*\(') {
+                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed endpoint is missing @ApiOperation() metadata near the route. Review Swagger documentation for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.operation"
                         $check.triggeredRules += "backend.swagger.controller.operation"
                     }
-                    if (-not $hasResponse) {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "PR adds or changes a controller route, but no Swagger response decorator was found in this controller. Document the response where the endpoint contract changed." -File $file -Line $null -RuleId "backend.swagger.controller.response"
+
+                    if ($endpointBlock -notmatch '@Api(OkResponse|CreatedResponse|AcceptedResponse|NoContentResponse|BadRequestResponse|UnauthorizedResponse|ForbiddenResponse|NotFoundResponse|ConflictResponse|Response)\s*\(') {
+                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed endpoint has no Swagger response decorator near the route. Document the response contract for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.response"
                         $check.triggeredRules += "backend.swagger.controller.response"
                     }
-                }
 
-                if (
-                    $content -match '@UseGuards\s*\([^\)]*(Jwt|Auth)' -and
-                    $content -notmatch '@ApiBearerAuth\s*\('
-                ) {
-                    Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Controller appears to use JWT/auth guards but has no @ApiBearerAuth() documentation. Confirm authentication is documented for the changed API routes." -File $file -Line (Get-LineNumberForText -Lines $lines -Pattern '@UseGuards\s*\(') -RuleId "backend.swagger.controller.bearer-auth"
-                    $check.triggeredRules += "backend.swagger.controller.bearer-auth"
+                    if (
+                        $endpointBlock -match '@UseGuards\s*\([^\)]*(Jwt|Auth)' -and
+                        $endpointBlock -notmatch '@ApiBearerAuth\s*\('
+                    ) {
+                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed endpoint explicitly uses a JWT/auth guard but has no nearby @ApiBearerAuth() documentation. Confirm authentication is documented for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.bearer-auth"
+                        $check.triggeredRules += "backend.swagger.controller.bearer-auth"
+                    }
                 }
             }
         }
         elseif ($file -match '(^|/)dto/.+\.dto\.ts$') {
             $check.layer = "dto"
-            $propertyChanged = $addedText -match '(?m)^\s*(readonly\s+)?[A-Za-z_$][A-Za-z0-9_$]*[!?]?\s*:'
-            $apiFacingName = $file -match '/(create|update|save|patch|request|response|query|filter|params?)[^/]*\.dto\.ts$'
 
-            if ($propertyChanged -and $apiFacingName) {
-                if ($content -notmatch '@ApiProperty(Optional)?\s*\(') {
-                    Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed API DTO fields were detected, but this DTO has no @ApiProperty()/@ApiPropertyOptional() metadata. Review Swagger documentation for the changed fields." -File $file -Line $null -RuleId "backend.swagger.dto.metadata"
-                    $check.triggeredRules += "backend.swagger.dto.metadata"
-                }
+            $apiFacingName = $file -match '(?i)/[^/]*(create|update|save|patch|request|response|query|filter|params?)[^/]*\.dto\.ts$'
+            $isResponseDto = $file -match '(?i)/[^/]*response[^/]*\.dto\.ts$'
 
-                $isResponseDto = $file -match '/response[^/]*\.dto\.ts$'
-                if (-not $isResponseDto -and $content -notmatch '@(Is|Validate|Matches|Min|Max|Length|Array|IsOptional|ValidateIf)[A-Za-z0-9_]*\s*\(') {
-                    Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed input DTO fields were detected, but no class-validator decorators were found. Confirm runtime validation is intentionally not required before merging." -File $file -Line $null -RuleId "backend.dto.validation"
-                    $check.triggeredRules += "backend.dto.validation"
+            if ($apiFacingName) {
+                $changedProperties = @(
+                    $addedEntries |
+                        Where-Object {
+                            $_.text -match '^\s*(readonly\s+)?[A-Za-z_$][A-Za-z0-9_$]*[!?]?\s*:'
+                        }
+                )
+
+                foreach ($property in $changedProperties) {
+                    $propertyLine = [int]$property.line
+                    $propertyText = [string]$property.text
+                    $propertyMatch = [regex]::Match(
+                        $propertyText,
+                        '^\s*(?:readonly\s+)?(?<name>[A-Za-z_$][A-Za-z0-9_$]*)[!?]?\s*:'
+                    )
+
+                    $propertyName = if ($propertyMatch.Success) {
+                        $propertyMatch.Groups['name'].Value
+                    }
+                    else {
+                        "changed field"
+                    }
+
+                    $decoratorBlock = Get-PropertyDecoratorBlockText -Lines $lines -PropertyLineNumber $propertyLine
+
+                    if ($decoratorBlock -notmatch '@ApiProperty(Optional)?\s*\(') {
+                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed API DTO field '$propertyName' has no nearby @ApiProperty()/@ApiPropertyOptional() metadata. Review Swagger documentation for this field." -File $file -Line $propertyLine -RuleId "backend.swagger.dto.metadata"
+                        $check.triggeredRules += "backend.swagger.dto.metadata"
+                    }
+
+                    if (
+                        -not $isResponseDto -and
+                        $decoratorBlock -notmatch '@(Is|Validate|Matches|Min|Max|Length|Array|ValidateIf)[A-Za-z0-9_]*\s*\('
+                    ) {
+                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed input DTO field '$propertyName' has no nearby class-validator decorator. Confirm runtime validation is intentionally not required for this field." -File $file -Line $propertyLine -RuleId "backend.dto.validation"
+                        $check.triggeredRules += "backend.dto.validation"
+                    }
                 }
             }
         }
