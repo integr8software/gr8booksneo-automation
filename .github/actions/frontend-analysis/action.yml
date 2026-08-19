@@ -656,6 +656,8 @@ runs:
         Write-Host "CRM QA ticket payload: $outputPath"
 
     - name: Publish QA tickets to CRM
+      id: crm_publish
+      continue-on-error: true
       shell: pwsh
       env:
         CRM_DRY_RUN: "false"
