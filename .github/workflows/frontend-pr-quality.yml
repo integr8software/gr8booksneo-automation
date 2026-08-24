@@ -148,28 +148,6 @@ jobs:
           fail-on-warnings: ${{ inputs.fail-on-warnings }}
 
 
-      - name: Publish QA tickets to CRM
-        if: github.event_name == 'push'
-        shell: pwsh
-        working-directory: ${{ github.workspace }}\qa-automation
-        env:
-          CRM_DRY_RUN: "false"
-          CRM_MAX_TICKETS: "200"
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $ticketsPath = Join-Path "${{ github.workspace }}" "reports\crm\crm-tickets.json"
-          $publisher = Join-Path "${{ github.workspace }}" "qa-automation\scripts\crm\publish-crm-tickets.mjs"
-
-          if (-not (Test-Path -LiteralPath $ticketsPath -PathType Leaf)) {
-            throw "CRM ticket payload not found: $ticketsPath"
-          }
-
-          node $publisher $ticketsPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "CRM publishing failed with exit code $LASTEXITCODE."
-          }
-
       - name: Upload frontend QA reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,5 +158,6 @@ jobs:
             ${{ steps.frontend-quality.outputs.report-markdown }}
             ${{ steps.frontend-quality.outputs.report-html }}
             ${{ steps.frontend-quality.outputs.report-png }}
+            ${{ github.workspace }}\reports\crm\crm-tickets.json
           if-no-files-found: error
           retention-days: 14
