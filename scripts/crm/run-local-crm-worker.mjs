@@ -6,11 +6,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 const repositories = [
   {
     repository: "integr8software/gr8bookslite-backend",
-    artifactPrefix: "backend-pr-quality-",
+    artifactPrefix: "backend-pr-quality-crm-",
   },
   {
     repository: "integr8software/gr8bookslite-frontend",
-    artifactPrefix: "frontend-pr-quality-",
+    artifactPrefix: "frontend-pr-quality-crm-",
   },
 ];
 
@@ -248,6 +248,13 @@ async function processOnce() {
       const ticketsPath = findTicketPayload(downloaded);
 
       if (!ticketsPath) {
+        if (dryRun) {
+          console.log(
+            `Run ${run.databaseId}: crm-tickets.json not found; dry run will NOT mark it as processed.`,
+          );
+          continue;
+        }
+
         console.log(
           `Run ${run.databaseId}: crm-tickets.json not found; marking as skipped.`,
         );

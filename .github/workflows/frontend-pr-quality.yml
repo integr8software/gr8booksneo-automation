@@ -85,14 +85,6 @@ jobs:
           cache: npm
           cache-dependency-path: qa-automation/package-lock.json
 
-      - name: Install QA dependencies
-        shell: powershell
-        working-directory: ${{ github.workspace }}\qa-automation
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          npm ci
-          npx playwright install chromium
 
       - name: Resolve references
         id: refs
@@ -140,7 +132,6 @@ jobs:
         uses: ./qa-automation/.github/actions/frontend-analysis
         with:
           repository-root: ${{ github.workspace }}
-          automation-root: ${{ github.workspace }}\qa-automation
           base-reference: ${{ steps.refs.outputs.base-reference }}
           head-reference: ${{ steps.refs.outputs.head-reference }}
           maximum-findings-per-rule: ${{ inputs.maximum-findings-per-rule }}

@@ -174,11 +174,11 @@ function maskCommentsAndStrings(source) {
     }
 
     if (state === "line-comment") {
-      if (current === "\\n") {
-        output += "\\n";
+      if (current === "\n") {
+        output += "\n";
         state = "code";
-      } else if (current === "\\r") {
-        output += "\\r";
+      } else if (current === "\r") {
+        output += "\r";
       } else {
         output += " ";
       }
@@ -193,7 +193,7 @@ function maskCommentsAndStrings(source) {
         state = "code";
         continue;
       }
-      output += current === "\\n" || current === "\\r" ? current : " ";
+      output += current === "\n" || current === "\r" ? current : " ";
       index += 1;
       continue;
     }
@@ -203,7 +203,7 @@ function maskCommentsAndStrings(source) {
     if (current === "\\\\") {
       output += " ";
       if (next !== undefined) {
-        output += next === "\\n" || next === "\\r" ? next : " ";
+        output += next === "\n" || next === "\r" ? next : " ";
         index += 2;
       } else {
         index += 1;
@@ -218,7 +218,7 @@ function maskCommentsAndStrings(source) {
       continue;
     }
 
-    output += current === "\\n" || current === "\\r" ? current : " ";
+    output += current === "\n" || current === "\r" ? current : " ";
     index += 1;
   }
 
