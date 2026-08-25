@@ -1,18 +1,7 @@
 name: Backend PR Quality
 
 on:
-  push:
-    branches-ignore:
-      - develop
-      - master
-
-  pull_request:
-    branches:
-      - develop
-
   workflow_call:
-
-  workflow_dispatch:
 
 permissions:
   actions: read
