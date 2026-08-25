@@ -390,9 +390,18 @@ if (tickets.length > maxTickets) {
   process.exit(0);
 }
 
-const crmBaseUrl = "https://crm.integr8.com.ph:6711";
-const crmUsername = "gmenciano@integr8.com.ph";
-const crmPassword = "12345";
+const crmBaseUrl =
+  process.env.CRM_BASE_URL ||
+  "https://crm.integr8.com.ph:6711";
+
+const crmUsername = process.env.CRM_USERNAME;
+const crmPassword = process.env.CRM_PASSWORD;
+
+if (!crmUsername || !crmPassword) {
+  throw new Error(
+    "CRM_USERNAME and CRM_PASSWORD must be set in the local environment.",
+  );
+}
 
 const dryRun =
   String(

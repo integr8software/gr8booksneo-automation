@@ -28,6 +28,7 @@ inputs:
     required: false
     default: "10"
 
+
 outputs:
   overall-status:
     description: Overall QA status
@@ -520,6 +521,17 @@ runs:
 
         Write-Host "CRM QA ticket payload: $outputPath"
 
+
+    - name: Upload CRM QA ticket payload artifact
+      if: always()
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: backend-pr-quality-crm-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.paths.outputs.reports_root }}\crm\crm-tickets.json
+        if-no-files-found: ignore
+        retention-days: 14
+
     - name: Build backend repository
       id: build
       if: always()
@@ -719,35 +731,6 @@ runs:
           Pop-Location
         }
 
-    - name: Publish QA tickets to CRM
-      shell: pwsh
-      env:
-        CRM_DRY_RUN: "false"
-        CRM_MAX_TICKETS: "200"
-        TOOLKIT_ROOT: ${{ steps.paths.outputs.toolkit_root }}
-        REPORTS_ROOT: ${{ steps.paths.outputs.reports_root }}
-      run: |
-        $ErrorActionPreference = "Stop"
-
-        $ticketPath = Join-Path $env:REPORTS_ROOT "crm\crm-tickets.json"
-        $scriptPath = Join-Path $env:TOOLKIT_ROOT "scripts\crm\publish-crm-tickets.mjs"
-
-        if (-not (Test-Path -LiteralPath $ticketPath -PathType Leaf)) {
-          throw "CRM ticket payload was not found: $ticketPath"
-        }
-
-        if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-          throw "CRM ticket publisher was not found: $scriptPath"
-        }
-
-        Write-Host "Publishing CRM QA tickets..."
-        node $scriptPath $ticketPath
-
-        if ($LASTEXITCODE -ne 0) {
-          throw "CRM QA ticket publishing failed with exit code $LASTEXITCODE."
-        }
-
-        Write-Host "CRM QA ticket publishing completed."
 
     - name: Capture PR dashboard PNG
       if: always()
