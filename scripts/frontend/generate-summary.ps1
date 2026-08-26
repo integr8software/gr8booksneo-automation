@@ -687,6 +687,114 @@ $infoFindings = @(
         }
 )
 
+function Add-CopyFindingSection {
+    param(
+        [System.Text.StringBuilder]$Builder,
+        [string]$Heading,
+        [object[]]$Findings
+    )
+
+    [void]$Builder.AppendLine($Heading.ToUpperInvariant())
+    [void]$Builder.AppendLine(("=" * $Heading.Length))
+    [void]$Builder.AppendLine()
+
+    if (@($Findings).Count -eq 0) {
+        [void]$Builder.AppendLine("None.")
+        [void]$Builder.AppendLine()
+        return
+    }
+
+    $index = 0
+
+    foreach ($finding in @($Findings)) {
+        $index += 1
+
+        $severity = [string](
+            Get-PropertyValue -Object $finding -Name "severity" -DefaultValue "warning"
+        )
+        $severityLabel = Get-SeverityLabel -Severity $severity
+        $category = [string](
+            Get-PropertyValue -Object $finding -Name "category" -DefaultValue "general"
+        )
+        $ruleId = [string](
+            Get-PropertyValue -Object $finding -Name "ruleId" -DefaultValue ""
+        )
+        $title = [string](
+            Get-PropertyValue -Object $finding -Name "title" -DefaultValue "Frontend quality finding"
+        )
+        $message = [string](
+            Get-PropertyValue -Object $finding -Name "message" -DefaultValue ""
+        )
+        $recommendation = [string](
+            Get-PropertyValue -Object $finding -Name "recommendation" -DefaultValue ""
+        )
+        $codeSnippet = [string](
+            Get-PropertyValue -Object $finding -Name "codeSnippet" -DefaultValue ""
+        )
+        $location = Get-DisplayLocation -Finding $finding
+
+        [void]$Builder.AppendLine("$index) $title")
+        [void]$Builder.AppendLine("Severity: $severityLabel")
+        [void]$Builder.AppendLine("Category: $category")
+
+        if (-not [string]::IsNullOrWhiteSpace($ruleId)) {
+            [void]$Builder.AppendLine("Rule: $ruleId")
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($location)) {
+            [void]$Builder.AppendLine("Location: $location")
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($message)) {
+            [void]$Builder.AppendLine()
+            [void]$Builder.AppendLine("Details:")
+            [void]$Builder.AppendLine($message.Trim())
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($codeSnippet)) {
+            [void]$Builder.AppendLine()
+            [void]$Builder.AppendLine("Code:")
+            [void]$Builder.AppendLine($codeSnippet.Trim())
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($recommendation)) {
+            [void]$Builder.AppendLine()
+            [void]$Builder.AppendLine("Recommendation:")
+            [void]$Builder.AppendLine($recommendation.Trim())
+        }
+
+        [void]$Builder.AppendLine()
+        [void]$Builder.AppendLine(("-" * 72))
+        [void]$Builder.AppendLine()
+    }
+}
+
+$copyTextBuilder = [System.Text.StringBuilder]::new()
+[void]$copyTextBuilder.AppendLine("GR8BOOKSNEO FRONTEND QA FINDINGS")
+[void]$copyTextBuilder.AppendLine()
+[void]$copyTextBuilder.AppendLine("Repository: $repositoryName")
+[void]$copyTextBuilder.AppendLine("Branch: $branch")
+[void]$copyTextBuilder.AppendLine("Commit: $commit")
+[void]$copyTextBuilder.AppendLine("Changed Files: $changedFileCount")
+[void]$copyTextBuilder.AppendLine("Total Findings: $total")
+[void]$copyTextBuilder.AppendLine("Blockers: $blockers")
+[void]$copyTextBuilder.AppendLine("Warnings: $warnings")
+[void]$copyTextBuilder.AppendLine("Information: $info")
+[void]$copyTextBuilder.AppendLine()
+[void]$copyTextBuilder.AppendLine(("=" * 72))
+[void]$copyTextBuilder.AppendLine()
+
+Add-CopyFindingSection -Builder $copyTextBuilder -Heading "Blockers" -Findings $blockerFindings
+Add-CopyFindingSection -Builder $copyTextBuilder -Heading "Warnings" -Findings $warningFindings
+Add-CopyFindingSection -Builder $copyTextBuilder -Heading "Information" -Findings $infoFindings
+
+$copyTextBase64 = [Convert]::ToBase64String(
+    [System.Text.Encoding]::UTF8.GetBytes(
+        $copyTextBuilder.ToString().TrimEnd()
+    )
+)
+
+
 $categorySummary = Get-PropertyValue `
     -Object $summary `
     -Name "categories" `
@@ -1128,6 +1236,36 @@ $html = @"
             font-size: 14px;
         }
 
+        .section-heading-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .copy-all-btn {
+            flex: 0 0 auto;
+            border: 1px solid #b8cdf2;
+            border-radius: 9px;
+            padding: 9px 13px;
+            background: #ffffff;
+            color: #175cd3;
+            font: inherit;
+            font-size: 13px;
+            font-weight: 750;
+            cursor: pointer;
+        }
+
+        .copy-all-btn:hover {
+            background: #eef4ff;
+        }
+
+        .copy-all-btn.copied {
+            border-color: #75c88a;
+            background: #edf9f0;
+            color: #16823e;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -1445,11 +1583,21 @@ $html = @"
         </section>
 
         <section class="panel">
-            <div class="section-heading">
-                <h2>Blockers</h2>
-                <p>
-                    Findings that must be fixed before proceeding.
-                </p>
+            <div class="section-heading section-heading-row">
+                <div>
+                    <h2>Blockers</h2>
+                    <p>
+                        Findings that must be fixed before proceeding.
+                    </p>
+                </div>
+                <button
+                    class="copy-all-btn"
+                    id="copyAllFindings"
+                    type="button"
+                    title="Copy all findings as clean AI-friendly text"
+                >
+                    Copy All
+                </button>
             </div>
 
             <div class="findings-grid">
@@ -1489,6 +1637,46 @@ $html = @"
             Generated by Gr8BooksNeo Frontend PR Quality Automation.
         </footer>
     </main>
+
+    <script>
+        (() => {
+            const button = document.getElementById("copyAllFindings");
+            if (!button) return;
+
+            const bytes = Uint8Array.from(
+                atob("$copyTextBase64"),
+                character => character.charCodeAt(0)
+            );
+            const copyText = new TextDecoder("utf-8").decode(bytes);
+
+            button.addEventListener("click", async () => {
+                const originalText = button.textContent.trim();
+
+                try {
+                    await navigator.clipboard.writeText(copyText);
+                }
+                catch {
+                    const area = document.createElement("textarea");
+                    area.value = copyText;
+                    area.setAttribute("readonly", "");
+                    area.style.position = "fixed";
+                    area.style.opacity = "0";
+                    document.body.appendChild(area);
+                    area.select();
+                    document.execCommand("copy");
+                    area.remove();
+                }
+
+                button.textContent = "Copied";
+                button.classList.add("copied");
+
+                window.setTimeout(() => {
+                    button.textContent = originalText;
+                    button.classList.remove("copied");
+                }, 1800);
+            });
+        })();
+    </script>
 </body>
 </html>
 "@

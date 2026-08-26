@@ -248,13 +248,27 @@ foreach ($result in $results) {
             $location = $category.Name
         }
 
+        $codeSnippet = if ($detail.PSObject.Properties["codeSnippet"]) {
+            [string]$detail.codeSnippet
+        }
+        elseif ($detail.PSObject.Properties["snippet"]) {
+            [string]$detail.snippet
+        }
+        else {
+            ""
+        }
+
         $findings += [pscustomobject]@{
             title=$message
+            category=$category.Name
+            ruleId=$rule
+            severity=$severity
             meta="$(if($mustFix){'Must fix before merge'}else{'Recommended improvement'}) · $($category.Name)"
-            pill=$(if($mustFix){'Must Fix'}else{'Recommendation'})
+            pill=$(if($mustFix){'Blocker'}else{'Recommendation'})
             kind=$(if($mustFix){'must'}else{'rec'})
             location=$location
             problem=$message
+            codeSnippet=$codeSnippet
             fix=$category.Fix
             symbol=$category.Symbol
             symbolColor=$category.Color
@@ -272,11 +286,15 @@ if ($buildFailed) {
 
     $findings += [pscustomobject]@{
         title = "Production build failed"
+        category = "Production Build"
+        ruleId = "build.production"
+        severity = "CRITICAL"
         meta = "Must fix before merge · Production Build"
-        pill = "Must Fix"
+        pill = "Blocker"
         kind = "must"
         location = "npm run build"
         problem = $buildErrorText
+        codeSnippet = ""
         fix = "Fix the reported backend build errors and push again. The PR will be retested automatically."
         symbol = "!"
         symbolColor = "#d91f33"
@@ -333,35 +351,138 @@ $qualityCards += @"
 <div class="check-card card"><div class="icon-bubble"><svg viewBox="0 0 24 24" fill="none" stroke="#1261d8" stroke-width="2"><path d="M8 3h8l1 4h3v14H4V7h3l1-4Z"/><path d="M8 12h8M12 8v8"/></svg></div><div><div class="check-name">Production Build</div><div class="powered">Powered by npm run build</div></div><div class="result"><span class="badge $($buildBadge.Class)">$(Convert-ToHtmlText $buildBadge.Text)</span><div class="count">$(Convert-ToHtmlText $buildIssueText)</div></div></div>
 "@
 
-if ($findings.Count -eq 0) {
-    $overviewIssues = '<div class="empty-issues">No issues need your attention.</div>'
-    $findingCards = '<div class="empty-issues">No findings were reported.</div>'
-    $viewAllButton = ""
-} else {
-    $overviewRows = @()
-    for ($i=0; $i -lt [Math]::Min(3,$findings.Count); $i++) {
-        $f = $findings[$i]
-        $overviewRows += @"
-<div class="issue" data-open="details" data-index="$i"><span style="color:$($f.symbolColor)">$(Convert-ToHtmlText $f.symbol)</span><div><div class="issue-title">$(Convert-ToHtmlText $f.title)</div><div class="issue-path">$(Convert-ToHtmlText $f.location)</div></div><span class="pill $($f.kind)">$(Convert-ToHtmlText $f.pill)</span><span>›</span></div>
-"@
-    }
-    $overviewIssues = $overviewRows -join [Environment]::NewLine
+function New-BackendFindingCards {
+    param([object[]]$Items)
 
-    $cards = @()
-    for ($i=0; $i -lt $findings.Count; $i++) {
-        $f = $findings[$i]
-        $cards += @"
-<div class="finding-card" data-finding="$i"><h3>$(Convert-ToHtmlText $f.title)</h3><p>$(Convert-ToHtmlText $f.location) · $(Convert-ToHtmlText $f.pill)</p></div>
-"@
+    if (@($Items).Count -eq 0) {
+        return '<div class="empty-state">No findings in this section.</div>'
     }
-    $findingCards = $cards -join [Environment]::NewLine
-    $viewAllButton = '<button class="mini-link" data-open="details">View all details →</button>'
+
+    $cards = New-Object 'System.Collections.Generic.List[string]'
+
+    foreach ($f in @($Items)) {
+        $ruleMarkup = if ([string]::IsNullOrWhiteSpace([string]$f.ruleId)) {
+            ""
+        }
+        else {
+            "<code class=`"rule-id`">$(Convert-ToHtmlText $f.ruleId)</code>"
+        }
+
+        $codeMarkup = if ([string]::IsNullOrWhiteSpace([string]$f.codeSnippet)) {
+            ""
+        }
+        else {
+            "<pre><code>$(Convert-ToHtmlText $f.codeSnippet)</code></pre>"
+        }
+
+        [void]$cards.Add(@"
+<article class="finding-card $($f.kind)">
+    <div class="finding-heading">
+        <div>
+            <span class="severity-badge $($f.kind)">$(Convert-ToHtmlText $f.pill)</span>
+            <span class="category-badge">$(Convert-ToHtmlText $f.category)</span>
+        </div>
+        $ruleMarkup
+    </div>
+
+    <h3>$(Convert-ToHtmlText $f.title)</h3>
+    <p class="location">$(Convert-ToHtmlText $f.location)</p>
+    <p class="finding-message">$(Convert-ToHtmlText $f.problem)</p>
+
+    $codeMarkup
+
+    <div class="recommendation-box">
+        <strong>Recommendation</strong>
+        <p>$(Convert-ToHtmlText $f.fix)</p>
+    </div>
+</article>
+"@)
+    }
+
+    return ($cards -join [Environment]::NewLine)
 }
 
-$findingsJson = $findings | Select-Object title,meta,pill,kind,location,problem,fix | ConvertTo-Json -Depth 5 -Compress
-if ($findings.Count -eq 0) { $findingsJson = "[]" }
-elseif ($findings.Count -eq 1) { $findingsJson = "[$findingsJson]" }
-$findingsJsonBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($findingsJson))
+function Add-BackendCopySection {
+    param(
+        [System.Text.StringBuilder]$Builder,
+        [string]$Heading,
+        [object[]]$Items
+    )
+
+    [void]$Builder.AppendLine($Heading.ToUpperInvariant())
+    [void]$Builder.AppendLine(("=" * $Heading.Length))
+    [void]$Builder.AppendLine()
+
+    if (@($Items).Count -eq 0) {
+        [void]$Builder.AppendLine("None.")
+        [void]$Builder.AppendLine()
+        return
+    }
+
+    $index = 0
+
+    foreach ($f in @($Items)) {
+        $index += 1
+
+        [void]$Builder.AppendLine("$index) $($f.title)")
+        [void]$Builder.AppendLine("Severity: $($f.pill)")
+        [void]$Builder.AppendLine("Category: $($f.category)")
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$f.ruleId)) {
+            [void]$Builder.AppendLine("Rule: $($f.ruleId)")
+        }
+
+        [void]$Builder.AppendLine("Location: $($f.location)")
+        [void]$Builder.AppendLine()
+        [void]$Builder.AppendLine("Details:")
+        [void]$Builder.AppendLine(([string]$f.problem).Trim())
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$f.codeSnippet)) {
+            [void]$Builder.AppendLine()
+            [void]$Builder.AppendLine("Code:")
+            [void]$Builder.AppendLine(([string]$f.codeSnippet).Trim())
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$f.fix)) {
+            [void]$Builder.AppendLine()
+            [void]$Builder.AppendLine("Recommendation:")
+            [void]$Builder.AppendLine(([string]$f.fix).Trim())
+        }
+
+        [void]$Builder.AppendLine()
+        [void]$Builder.AppendLine(("-" * 72))
+        [void]$Builder.AppendLine()
+    }
+}
+
+$blockerFindings = @($findings | Where-Object isMustFix)
+$warningFindings = @($findings | Where-Object { -not $_.isMustFix })
+
+$blockerCards = New-BackendFindingCards -Items $blockerFindings
+$warningCards = New-BackendFindingCards -Items $warningFindings
+
+$copyTextBuilder = [System.Text.StringBuilder]::new()
+[void]$copyTextBuilder.AppendLine("GR8BOOKSNEO BACKEND QA FINDINGS")
+[void]$copyTextBuilder.AppendLine()
+[void]$copyTextBuilder.AppendLine("Repository: $repository")
+[void]$copyTextBuilder.AppendLine("Branch: $branch")
+[void]$copyTextBuilder.AppendLine("Commit: $commit")
+[void]$copyTextBuilder.AppendLine("Changed Files: $changedCount")
+[void]$copyTextBuilder.AppendLine("Total Findings: $($findings.Count)")
+[void]$copyTextBuilder.AppendLine("Blockers: $blockingCount")
+[void]$copyTextBuilder.AppendLine("Recommendations: $advisoryCount")
+[void]$copyTextBuilder.AppendLine()
+[void]$copyTextBuilder.AppendLine(("=" * 72))
+[void]$copyTextBuilder.AppendLine()
+
+Add-BackendCopySection -Builder $copyTextBuilder -Heading "Blockers" -Items $blockerFindings
+Add-BackendCopySection -Builder $copyTextBuilder -Heading "Warnings / Recommendations" -Items $warningFindings
+
+$copyTextBase64 = [Convert]::ToBase64String(
+    [Text.Encoding]::UTF8.GetBytes(
+        $copyTextBuilder.ToString().TrimEnd()
+    )
+)
 
 $template = Get-Content -LiteralPath $TemplatePath -Raw
 $shieldIcon = '<svg viewBox="0 0 64 64"><path d="M32 5 52 13v15c0 14-8.5 24.5-20 31C20.5 52.5 12 42 12 28V13L32 5Z" fill="#18a34a"/><path d="m22 31 7 7 14-16" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
@@ -386,15 +507,14 @@ $values = @{
     QUALITY_CHECKS_HTML=($qualityCards -join [Environment]::NewLine)
     BLOCKING_COUNT=[string]$blockingCount
     ADVISORY_COUNT=[string]$advisoryCount
-    VIEW_ALL_BUTTON=$viewAllButton
-    OVERVIEW_ISSUES_HTML=$overviewIssues
     TOTAL_FINDINGS=[string]$findings.Count
-    FINDING_CARDS_HTML=$findingCards
-    FINDINGS_JSON_BASE64=$findingsJsonBase64
+    BLOCKER_CARDS_HTML=$blockerCards
+    WARNING_CARDS_HTML=$warningCards
+    COPY_TEXT_BASE64=$copyTextBase64
 }
 
 foreach ($key in $values.Keys) {
-    $value = if ($key -in @("OVERALL_ICON","RECOMMENDATION_ICON","QUALITY_CHECKS_HTML","VIEW_ALL_BUTTON","OVERVIEW_ISSUES_HTML","FINDING_CARDS_HTML","FINDINGS_JSON_BASE64")) {
+    $value = if ($key -in @("OVERALL_ICON","RECOMMENDATION_ICON","QUALITY_CHECKS_HTML","BLOCKER_CARDS_HTML","WARNING_CARDS_HTML","COPY_TEXT_BASE64")) {
         [string]$values[$key]
     } else {
         Convert-ToHtmlText $values[$key]
