@@ -12,6 +12,12 @@
     [string]$ChangedFilesPath,
 
     [Parameter(Mandatory = $true)]
+    [string]$BaseReference,
+
+    [Parameter(Mandatory = $true)]
+    [string]$HeadReference,
+
+    [Parameter(Mandatory = $true)]
     [string]$ResultPath,
 
     [Parameter(Mandatory = $true)]
@@ -67,6 +73,85 @@ function Test-PathIsChanged {
     }
 
     return $false
+}
+
+function Get-PackageDependencyMap {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Reference
+    )
+
+    Push-Location $RepositoryRoot
+
+    try {
+        $packageJsonText = git show "${Reference}:package.json" 2>$null
+
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($packageJsonText -join "`n"))) {
+            return @{}
+        }
+
+        $packageJson = ($packageJsonText -join "`n") | ConvertFrom-Json
+        $map = @{}
+
+        foreach ($sectionName in @(
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies"
+        )) {
+            $sectionProperty = $packageJson.PSObject.Properties[$sectionName]
+
+            if ($null -eq $sectionProperty -or $null -eq $sectionProperty.Value) {
+                continue
+            }
+
+            foreach ($dependencyProperty in $sectionProperty.Value.PSObject.Properties) {
+                $map[[string]$dependencyProperty.Name] = [string]$dependencyProperty.Value
+            }
+        }
+
+        return $map
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+function Get-ChangedDependencyNames {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BaseReference,
+
+        [Parameter(Mandatory = $true)]
+        [string]$HeadReference
+    )
+
+    $baseMap = Get-PackageDependencyMap `
+        -RepositoryRoot $RepositoryRoot `
+        -Reference $BaseReference
+
+    $headMap = Get-PackageDependencyMap `
+        -RepositoryRoot $RepositoryRoot `
+        -Reference $HeadReference
+
+    $changed = New-Object 'System.Collections.Generic.List[string]'
+
+    foreach ($name in $headMap.Keys) {
+        if (
+            -not $baseMap.ContainsKey($name) -or
+            [string]$baseMap[$name] -ne [string]$headMap[$name]
+        ) {
+            [void]$changed.Add([string]$name)
+        }
+    }
+
+    return @($changed | Sort-Object -Unique)
 }
 
 function Get-KnipIssueMessage {
@@ -246,6 +331,17 @@ try {
             }
     ).Count -gt 0
 
+    $changedDependencyNames = @()
+
+    if ($dependencyFilesChanged) {
+        $changedDependencyNames = @(
+            Get-ChangedDependencyNames `
+                -RepositoryRoot $resolvedRepositoryRoot `
+                -BaseReference $BaseReference `
+                -HeadReference $HeadReference
+        )
+    }
+
     if (
         $changedSourceFiles.Count -eq 0 -and
         -not $dependencyFilesChanged
@@ -332,6 +428,7 @@ try {
         changedFiles = $normalizedChangedFiles
         relevantChangedFiles = $changedSourceFiles
         dependencyFilesChanged = $dependencyFilesChanged
+        changedDependencyNames = $changedDependencyNames
         exitCode = $processResult.ExitCode
         durationMs = $processResult.DurationMs
         stdout = $processResult.StandardOut
@@ -457,13 +554,30 @@ Error: $($_.Exception.Message)
 
                 $isRelevant = $false
 
+                $issueName = if (
+                    $null -ne $issue.PSObject.Properties["name"] -and
+                    -not [string]::IsNullOrWhiteSpace([string]$issue.name)
+                ) {
+                    [string]$issue.name
+                }
+                else {
+                    ""
+                }
+
+                $isChangedDependencyIssue = (
+                    $isDependencyManifest -and
+                    $dependencyFilesChanged -and
+                    -not [string]::IsNullOrWhiteSpace($issueName) -and
+                    ($changedDependencyNames -contains $issueName)
+                )
+
                 if ($isChangedSourceFile) {
                     $isRelevant = $true
                 }
-                elseif (
-                    $isDependencyManifest -and
-                    $dependencyFilesChanged
-                ) {
+                elseif ($isChangedDependencyIssue) {
+                    # package.json can produce repository-wide Knip findings.
+                    # Only surface dependency findings when this PR actually
+                    # added or changed that dependency's manifest entry.
                     $isRelevant = $true
                 }
                 elseif (
@@ -538,6 +652,7 @@ Error: $($_.Exception.Message)
                 changedFileCount = $normalizedChangedFiles.Count
                 analyzedChangedSourceFileCount = $changedSourceFiles.Count
                 dependencyFilesChanged = $dependencyFilesChanged
+                changedDependencyNames = $changedDependencyNames
                 totalRepositoryFindingCount = $totalKnipFindingCount
                 relevantIssueTypes = $relevantIssueTypes
             }
@@ -561,6 +676,7 @@ Error: $($_.Exception.Message)
                 changedFileCount = $normalizedChangedFiles.Count
                 analyzedChangedSourceFileCount = $changedSourceFiles.Count
                 dependencyFilesChanged = $dependencyFilesChanged
+                changedDependencyNames = $changedDependencyNames
                 totalRepositoryFindingCount = $totalKnipFindingCount
                 relevantIssueTypes = @{}
             }

@@ -399,6 +399,9 @@ try {
                         }
                 )
 
+                $missingSwaggerFields = New-Object 'System.Collections.Generic.List[object]'
+                $missingValidationFields = New-Object 'System.Collections.Generic.List[object]'
+
                 foreach ($property in $changedProperties) {
                     $propertyLine = [int]$property.line
                     $propertyText = [string]$property.text
@@ -417,17 +420,55 @@ try {
                     $decoratorBlock = Get-PropertyDecoratorBlockText -Lines $lines -PropertyLineNumber $propertyLine
 
                     if ($decoratorBlock -notmatch '@ApiProperty(Optional)?\s*\(') {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed API DTO field '$propertyName' has no nearby @ApiProperty()/@ApiPropertyOptional() metadata. Review Swagger documentation for this field." -File $file -Line $propertyLine -RuleId "backend.swagger.dto.metadata"
-                        $check.triggeredRules += "backend.swagger.dto.metadata"
+                        [void]$missingSwaggerFields.Add([pscustomobject]@{
+                            name = $propertyName
+                            line = $propertyLine
+                        })
                     }
 
                     if (
                         -not $isResponseDto -and
                         $decoratorBlock -notmatch '@(Is|Validate|Matches|Min|Max|Length|Array|ValidateIf)[A-Za-z0-9_]*\s*\('
                     ) {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed input DTO field '$propertyName' has no nearby class-validator decorator. Confirm runtime validation is intentionally not required for this field." -File $file -Line $propertyLine -RuleId "backend.dto.validation"
-                        $check.triggeredRules += "backend.dto.validation"
+                        [void]$missingValidationFields.Add([pscustomobject]@{
+                            name = $propertyName
+                            line = $propertyLine
+                        })
                     }
+                }
+
+                if ($missingSwaggerFields.Count -gt 0) {
+                    $fieldNames = @(
+                        $missingSwaggerFields |
+                            ForEach-Object { [string]$_.name }
+                    ) -join ", "
+
+                    Add-Finding `
+                        -Findings $findings `
+                        -Severity "MEDIUM" `
+                        -Message "Changed API DTO fields missing @ApiProperty()/@ApiPropertyOptional() metadata: $fieldNames. Review Swagger documentation for these changed fields." `
+                        -File $file `
+                        -Line ([int]$missingSwaggerFields[0].line) `
+                        -RuleId "backend.swagger.dto.metadata"
+
+                    $check.triggeredRules += "backend.swagger.dto.metadata"
+                }
+
+                if ($missingValidationFields.Count -gt 0) {
+                    $fieldNames = @(
+                        $missingValidationFields |
+                            ForEach-Object { [string]$_.name }
+                    ) -join ", "
+
+                    Add-Finding `
+                        -Findings $findings `
+                        -Severity "MEDIUM" `
+                        -Message "Changed input DTO fields without nearby class-validator decorators: $fieldNames. Confirm runtime validation is intentionally not required for these changed fields." `
+                        -File $file `
+                        -Line ([int]$missingValidationFields[0].line) `
+                        -RuleId "backend.dto.validation"
+
+                    $check.triggeredRules += "backend.dto.validation"
                 }
             }
         }

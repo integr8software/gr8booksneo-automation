@@ -377,6 +377,8 @@ runs:
           -RepositoryRoot $env:REPOSITORY_ROOT `
           -ConfigPath $configPath `
           -ChangedFilesPath $env:CHANGED_FILES_PATH `
+          -BaseReference "${{ inputs.base-reference }}" `
+          -HeadReference "${{ inputs.head-reference }}" `
           -ResultPath $resultPath `
           -RawOutputPath $rawOutputPath
 

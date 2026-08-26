@@ -37,7 +37,11 @@
   ],
   "ignoreBinaries": [
     "prisma",
-    "nest"
+    "nest",
+    "prettier",
+    "eslint",
+    "jest",
+    "tsc"
   ],
   "ignoreExportsUsedInFile": true,
   "includeEntryExports": false,
