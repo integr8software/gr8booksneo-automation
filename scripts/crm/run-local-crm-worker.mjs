@@ -62,13 +62,30 @@ function gh(args, options = {}) {
 
 function readState() {
   if (!fs.existsSync(stateFile)) {
-    return { processed: {} };
+    return {
+      processed: {},
+      prBaselineInitializedAt: null,
+    };
   }
 
   try {
-    return JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    const state = JSON.parse(
+      fs.readFileSync(stateFile, "utf8"),
+    );
+
+    return {
+      processed:
+        state && typeof state.processed === "object"
+          ? state.processed
+          : {},
+      prBaselineInitializedAt:
+        state?.prBaselineInitializedAt || null,
+    };
   } catch {
-    return { processed: {} };
+    return {
+      processed: {},
+      prBaselineInitializedAt: null,
+    };
   }
 }
 
@@ -96,14 +113,14 @@ function ensureRequirements() {
   }
 }
 
-function listSuccessfulPushRuns(repository) {
+function listSuccessfulPrRuns(repository) {
   const output = gh([
     "run",
     "list",
     "--repo",
     repository,
     "--event",
-    "push",
+    "pull_request",
     "--status",
     "success",
     "--limit",
@@ -113,6 +130,23 @@ function listSuccessfulPushRuns(repository) {
   ]);
 
   return output ? JSON.parse(output) : [];
+}
+
+function hasProcessedHeadSha(state, repository, headSha) {
+  const newKey = `${repository}#${headSha}`;
+
+  if (state.processed[newKey]) {
+    return true;
+  }
+
+  // Backward compatibility with state entries created by the older worker,
+  // which keyed processed items by GitHub Actions run ID.
+  return Object.entries(state.processed).some(
+    ([existingKey, value]) =>
+      existingKey.startsWith(`${repository}#`) &&
+      String(value?.headSha || "") === String(headSha || "") &&
+      value?.status === "published",
+  );
 }
 
 function listArtifacts(repository, runId) {
@@ -195,13 +229,59 @@ function publishTickets(ticketPath) {
   return result.status === 0;
 }
 
+async function initializePrBaseline(state) {
+  if (state.prBaselineInitializedAt || dryRun) {
+    return false;
+  }
+
+  console.log(
+    "Initializing CRM PR baseline. Existing successful PR runs will NOT be published.",
+  );
+
+  for (const config of repositories) {
+    const runs = listSuccessfulPrRuns(
+      config.repository,
+    );
+
+    for (const run of runs) {
+      if (!run.headSha) {
+        continue;
+      }
+
+      const key = `${config.repository}#${run.headSha}`;
+
+      if (!state.processed[key]) {
+        state.processed[key] = {
+          status: "baseline",
+          processedAt: new Date().toISOString(),
+          headSha: run.headSha,
+          runId: run.databaseId,
+        };
+      }
+    }
+  }
+
+  state.prBaselineInitializedAt = new Date().toISOString();
+  writeState(state);
+
+  console.log(
+    "CRM PR baseline initialized. Only newer PR QA commits will publish automatically.",
+  );
+
+  return true;
+}
+
 async function processOnce() {
   const state = readState();
+
+  if (await initializePrBaseline(state)) {
+    return;
+  }
 
   for (const config of repositories) {
     console.log(`\nChecking ${config.repository}...`);
 
-    const runs = listSuccessfulPushRuns(
+    const runs = listSuccessfulPrRuns(
       config.repository,
     ).sort(
       (a, b) =>
@@ -210,9 +290,22 @@ async function processOnce() {
     );
 
     for (const run of runs) {
-      const key = `${config.repository}#${run.databaseId}`;
+      if (!run.headSha) {
+        console.log(
+          `Run ${run.databaseId}: missing head SHA; skipping.`,
+        );
+        continue;
+      }
 
-      if (state.processed[key]) {
+      const key = `${config.repository}#${run.headSha}`;
+
+      if (
+        hasProcessedHeadSha(
+          state,
+          config.repository,
+          run.headSha,
+        )
+      ) {
         continue;
       }
 
@@ -230,7 +323,7 @@ async function processOnce() {
       if (!artifact) {
         console.log(
           `Run ${run.databaseId} (${run.workflowName || run.displayTitle || "workflow"}): ` +
-            `no matching ${config.artifactPrefix} artifact; skipping for now.`,
+            `no matching ${config.artifactPrefix} artifact; skipping.`,
         );
         continue;
       }
@@ -256,13 +349,14 @@ async function processOnce() {
         }
 
         console.log(
-          `Run ${run.databaseId}: crm-tickets.json not found; marking as skipped.`,
+          `Run ${run.databaseId}: crm-tickets.json not found; marking this commit as skipped.`,
         );
 
         state.processed[key] = {
           status: "no-payload",
           processedAt: new Date().toISOString(),
           headSha: run.headSha,
+          runId: run.databaseId,
         };
         writeState(state);
         continue;
@@ -283,7 +377,7 @@ async function processOnce() {
 
       if (dryRun) {
         console.log(
-          `Run ${run.databaseId}: dry run completed; run was NOT marked as processed.`,
+          `Run ${run.databaseId}: dry run completed; commit was NOT marked as processed.`,
         );
         continue;
       }
@@ -292,11 +386,12 @@ async function processOnce() {
         status: "published",
         processedAt: new Date().toISOString(),
         headSha: run.headSha,
+        runId: run.databaseId,
       };
       writeState(state);
 
       console.log(
-        `Run ${run.databaseId}: CRM publishing completed.`,
+        `Run ${run.databaseId}: CRM publishing completed for ${run.headSha}.`,
       );
     }
   }
@@ -308,11 +403,17 @@ async function main() {
   fs.mkdirSync(downloadsDirectory, { recursive: true });
 
   console.log("Gr8BooksNeo local CRM worker started.");
+  console.log(
+    "Watching successful PR runs for dedicated CRM artifacts.",
+  );
+  console.log(
+    "CRM publishing remains local and outside the GitHub quality gate.",
+  );
 
   if (dryRun) {
     console.log("CRM_DRY_RUN=true — running one test cycle only.");
     await processOnce();
-    console.log("Dry-run cycle finished. No runs were marked as processed.");
+    console.log("Dry-run cycle finished. No commits were marked as processed.");
     return;
   }
 
