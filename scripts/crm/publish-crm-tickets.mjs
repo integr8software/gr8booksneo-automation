@@ -84,36 +84,93 @@ async function loginToCrm(page, crmBaseUrl, username, password) {
 }
 
 async function chooseAutocomplete(page, input, value) {
-  await input.fill("");
-  await input.fill(value);
+  const attempts = 3;
+  let lastError = null;
 
-  await page.waitForTimeout(900);
-
-  const menu = page.locator(".ui-autocomplete:visible");
-  await menu.waitFor({
+  await input.waitFor({
     state: "visible",
     timeout: 15000,
   });
 
-  const exact = menu
-    .locator(".ui-menu-item")
-    .filter({
-      hasText: value,
-    })
-    .first();
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await input.click();
+      await input.fill("");
+      await page.waitForTimeout(300);
 
-  if ((await exact.count()) > 0) {
-    await exact.click();
-    return;
+      // Type instead of one-shot fill so the CRM/jQuery autocomplete
+      // receives the same key/input events it gets during normal use.
+      await input.type(value, {
+        delay: 35,
+      });
+
+      const menu = page
+        .locator(".ui-autocomplete:visible")
+        .last();
+
+      await menu.waitFor({
+        state: "visible",
+        timeout: 7000,
+      });
+
+      const items = menu.locator(".ui-menu-item");
+
+      if ((await items.count()) === 0) {
+        throw new Error(
+          `Autocomplete returned no result for "${value}".`,
+        );
+      }
+
+      const exact = items
+        .filter({
+          hasText: value,
+        })
+        .first();
+
+      if ((await exact.count()) > 0) {
+        await exact.click();
+      } else {
+        await items.first().click();
+      }
+
+      await page.waitForTimeout(250);
+
+      const selectedValue = (await input.inputValue()).trim();
+
+      if (!selectedValue) {
+        throw new Error(
+          `Autocomplete selection for "${value}" left the field empty.`,
+        );
+      }
+
+      if (attempt > 1) {
+        console.log(
+          `Autocomplete recovered for "${value}" on attempt ${attempt}/${attempts}.`,
+        );
+      }
+
+      return;
+    } catch (error) {
+      lastError = error;
+
+      console.warn(
+        `Autocomplete attempt ${attempt}/${attempts} failed for "${value}": ` +
+          `${error?.message || error}`,
+      );
+
+      await input.press("Escape").catch(() => {});
+      await input.fill("").catch(() => {});
+
+      if (attempt < attempts) {
+        await page.waitForTimeout(1000 * attempt);
+      }
+    }
   }
 
-  const first = menu.locator(".ui-menu-item").first();
-
-  if ((await first.count()) === 0) {
-    throw new Error(`Autocomplete returned no result for "${value}".`);
-  }
-
-  await first.click();
+  throw new Error(
+    `Autocomplete failed for "${value}" after ${attempts} attempts. ` +
+      `${lastError?.message || lastError || ""}`.trim(),
+  );
 }
 
 async function resolveSystemCode(page, wantedCode, wantedName) {
