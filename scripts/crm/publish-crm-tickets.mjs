@@ -116,7 +116,6 @@ async function chooseAutocomplete(page, input, value) {
   await first.click();
 }
 
-
 async function resolveSystemCode(page, wantedCode, wantedName) {
   const result = await page.evaluate(
     async ({ wantedCode, wantedName }) => {
@@ -266,6 +265,7 @@ async function setSystemFields(page, row, fixed) {
     `System resolved: ${selectedCode} - ${selectedName} (RecordID ${selectedId})`,
   );
 }
+
 function ticketRows(page) {
   return page.locator("tr").filter({
     has: page.locator('[id*="txtConcern_Entry_"]'),
@@ -292,6 +292,45 @@ async function addRow(page, expectedCount) {
     expectedCount,
     { timeout: 60000 },
   );
+}
+
+function resolveCrmSeverity(ticket) {
+  if (ticket?.kind === "file-change") {
+    return "Low";
+  }
+
+  const severity = String(ticket?.severity || "")
+    .trim()
+    .toLowerCase();
+
+  const concern = String(ticket?.concern || "")
+    .trim()
+    .toLowerCase();
+
+  if (
+    severity === "critical" ||
+    concern.startsWith("qa blocker")
+  ) {
+    return "Critical";
+  }
+
+  if (
+    severity === "high" ||
+    severity === "error"
+  ) {
+    return "High";
+  }
+
+  if (
+    severity === "medium" ||
+    severity === "warning" ||
+    severity === "warn" ||
+    ticket?.kind === "finding"
+  ) {
+    return "Medium";
+  }
+
+  return "Low";
 }
 
 async function fillTicketRow(page, row, ticket, fixed) {
@@ -328,6 +367,42 @@ async function fillTicketRow(page, row, ticket, fixed) {
   }
 
   await setSystemFields(page, row, fixed);
+
+  const severityLevel = row.locator(
+    '[id*="ddlSeverityLevel_"]',
+  );
+
+  if ((await severityLevel.count()) === 0) {
+    throw new Error(
+      "CRM Severity Level field was not found.",
+    );
+  }
+
+  const crmSeverity = resolveCrmSeverity(ticket);
+
+  await severityLevel.selectOption({
+    label: crmSeverity,
+  }).catch(async () => {
+    await severityLevel.selectOption(crmSeverity);
+  });
+
+  const selectedSeverity = await severityLevel
+    .locator("option:checked")
+    .textContent();
+
+  if (
+    String(selectedSeverity || "").trim() !== crmSeverity
+  ) {
+    throw new Error(
+      `CRM Severity Level did not bind correctly. ` +
+        `Expected="${crmSeverity}", ` +
+        `Actual="${String(selectedSeverity || "").trim()}".`,
+    );
+  }
+
+  console.log(
+    `CRM Severity Level selected: ${crmSeverity}`,
+  );
 
   const status = row.locator('[id*="ddlStatus_"]');
   if ((await status.count()) > 0) {
