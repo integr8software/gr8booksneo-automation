@@ -352,7 +352,7 @@ try {
 
             if ((Get-SafeCount -Value $changedRoutes) -gt 0) {
                 if ($content -notmatch '@ApiTags\s*\(') {
-                    $severity = if ($isNewFile) { "HIGH" } else { "MEDIUM" }
+                    $severity = "HIGH"
                     Add-Finding -Findings $findings -Severity $severity -Message "Changed controller exposes API routes but has no @ApiTags() Swagger metadata." -File $file -Line (Get-LineNumberForText -Lines $lines -Pattern '@Controller\s*\(') -RuleId "backend.swagger.controller.tags"
                     $check.triggeredRules += "backend.swagger.controller.tags"
                 }
@@ -366,12 +366,12 @@ try {
                     }
 
                     if ($endpointBlock -notmatch '@ApiOperation\s*\(') {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed endpoint is missing @ApiOperation() metadata near the route. Review Swagger documentation for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.operation"
+                        Add-Finding -Findings $findings -Severity "HIGH" -Message "Changed endpoint is missing @ApiOperation() metadata near the route. Review Swagger documentation for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.operation"
                         $check.triggeredRules += "backend.swagger.controller.operation"
                     }
 
                     if ($endpointBlock -notmatch '@Api(OkResponse|CreatedResponse|AcceptedResponse|NoContentResponse|BadRequestResponse|UnauthorizedResponse|ForbiddenResponse|NotFoundResponse|ConflictResponse|Response)\s*\(') {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed endpoint has no Swagger response decorator near the route. Document the response contract for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.response"
+                        Add-Finding -Findings $findings -Severity "HIGH" -Message "Changed endpoint has no Swagger response decorator near the route. Document the response contract for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.response"
                         $check.triggeredRules += "backend.swagger.controller.response"
                     }
 
@@ -379,7 +379,7 @@ try {
                         $endpointBlock -match '@UseGuards\s*\([^\)]*(Jwt|Auth)' -and
                         $endpointBlock -notmatch '@ApiBearerAuth\s*\('
                     ) {
-                        Add-Finding -Findings $findings -Severity "MEDIUM" -Message "Changed endpoint explicitly uses a JWT/auth guard but has no nearby @ApiBearerAuth() documentation. Confirm authentication is documented for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.bearer-auth"
+                        Add-Finding -Findings $findings -Severity "HIGH" -Message "Changed endpoint explicitly uses a JWT/auth guard but has no nearby @ApiBearerAuth() documentation. Confirm authentication is documented for this endpoint." -File $file -Line $routeLine -RuleId "backend.swagger.controller.bearer-auth"
                         $check.triggeredRules += "backend.swagger.controller.bearer-auth"
                     }
                 }
@@ -445,7 +445,7 @@ try {
 
                     Add-Finding `
                         -Findings $findings `
-                        -Severity "MEDIUM" `
+                        -Severity "HIGH" `
                         -Message "Changed API DTO fields missing @ApiProperty()/@ApiPropertyOptional() metadata: $fieldNames. Review Swagger documentation for these changed fields." `
                         -File $file `
                         -Line ([int]$missingSwaggerFields[0].line) `
@@ -485,7 +485,7 @@ try {
                 $specExists = Test-Path -LiteralPath $specAbsolute -PathType Leaf
 
                 if (-not $specExists) {
-                    Add-Finding -Findings $findings -Severity "MEDIUM" -Message "PR changes likely business-critical service behavior, but no colocated service Jest spec was detected. Review whether the changed behavior already has meaningful Jest coverage; add focused tests if it does not. Simple CRUD/wiring changes do not require artificial tests." -File $file -Line $null -RuleId "backend.jest.service.business-logic"
+                    Add-Finding -Findings $findings -Severity "HIGH" -Message "PR changes likely business-critical service behavior, but no colocated service Jest spec was detected. Review whether the changed behavior already has meaningful Jest coverage; add focused tests if it does not. Simple CRUD/wiring changes do not require artificial tests." -File $file -Line $null -RuleId "backend.jest.service.business-logic"
                     $check.triggeredRules += "backend.jest.service.business-logic"
                 }
             }
@@ -593,3 +593,4 @@ catch {
     Write-Error $message
     exit 1
 }
+
