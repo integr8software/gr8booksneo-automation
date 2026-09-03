@@ -492,10 +492,15 @@ try {
             Tool = "Knip"
             Category = "UNUSED_CODE"
         },
-        @{
+       @{
             FileName = "semgrep-result.json"
             Tool = "Semgrep"
             Category = "SECURITY"
+        },
+       @{
+            FileName = "backend-requirements-result.json"
+            Tool = "Backend Requirements"
+            Category = "BACKEND_REQUIREMENTS"
         }
     )
 
