@@ -653,13 +653,75 @@ if (
             confidence = "high"
         }
 
-        $allFindings = @($allFindings) + @($buildFinding)
-        $total += 1
-        $blockers += 1
+        $existingBuildFindings = @(
+            $allFindings |
+                Where-Object {
+                    [string](
+                        Get-PropertyValue `
+                            -Object $_ `
+                            -Name "ruleId" `
+                            -DefaultValue ""
+                    ) -eq "build.productionBuild"
+                }
+        )
+
+        if ($existingBuildFindings.Count -eq 0) {
+            $allFindings = @($allFindings) + @($buildFinding)
+            $total += 1
+            $blockers += 1
+        }
+
         $status = "blocked"
         $decisionLabel = "QA Review Required"
     }
 }
+
+# Persist the build-aware result back into the canonical frontend QA JSON.
+# Downstream consumers (CRM, action outputs, GitHub summary, dashboard preview)
+# must all read the same final QA decision.
+$report.findings = @($allFindings)
+
+if ($null -eq $report.summary) {
+    $report |
+        Add-Member `
+            -MemberType NoteProperty `
+            -Name "summary" `
+            -Value ([pscustomobject]@{}) `
+            -Force
+}
+
+$report.summary |
+    Add-Member -MemberType NoteProperty -Name "total" -Value $total -Force
+$report.summary |
+    Add-Member -MemberType NoteProperty -Name "blockers" -Value $blockers -Force
+$report.summary |
+    Add-Member -MemberType NoteProperty -Name "warnings" -Value $warnings -Force
+$report.summary |
+    Add-Member -MemberType NoteProperty -Name "info" -Value $info -Force
+$report.summary |
+    Add-Member -MemberType NoteProperty -Name "status" -Value $status -Force
+$report.summary |
+    Add-Member -MemberType NoteProperty -Name "label" -Value $decisionLabel -Force
+
+if ($null -eq $report.decision) {
+    $report |
+        Add-Member `
+            -MemberType NoteProperty `
+            -Name "decision" `
+            -Value ([pscustomobject]@{}) `
+            -Force
+}
+
+$report.decision |
+    Add-Member -MemberType NoteProperty -Name "status" -Value $status -Force
+$report.decision |
+    Add-Member -MemberType NoteProperty -Name "label" -Value $decisionLabel -Force
+
+$report |
+    ConvertTo-Json -Depth 100 |
+    Set-Content `
+        -LiteralPath $InputPath `
+        -Encoding UTF8
 
 $displayFindings = @(
     $allFindings |
